@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! What memory costs and whether it helps. Rows go to ClickHouse without the writer (no sequence
 //! number, so any replica can write them); a metering failure never breaks what is measured.
 

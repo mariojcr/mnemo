@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! MCP at `POST /mcp`; `mnemo mcp` only bridges stdio to it, so no logic is duplicated.
 //! Tool descriptions and results are in English: a model reads them.
 

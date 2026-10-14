@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Integration against a running server (`MNEMO_TEST_URL`, admin key in `MNEMO_TEST_KEY`). Without
 //! the URL it FAILS rather than skips: a test that talks to nothing proves nothing.
 #![cfg(feature = "integration")]

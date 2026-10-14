@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+# SPDX-License-Identifier: Apache-2.0
+
 # Every push and pull request runs the full suite (ClickHouse included). From main, the image goes
 # to ghcr.io as `main` and `sha-<7>`. A version tag on main (`v0.2.0`, or a pre-release such as
 # `v0.2.0-rc.1`) also pushes the image as `0.2.0` (and `latest` unless it is a pre-release) and

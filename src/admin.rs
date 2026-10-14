@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! What the UI needs beyond the globe: OIDC login, own keys, connections, sessions, admin panel.
 //! Configuration is shown, not edited: editing it here would be a second source of truth.
 

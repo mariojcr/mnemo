@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! The globe: the in-memory index search runs on, a projection of the ClickHouse log (the source
 //! of truth) that each replica rebuilds at startup. The search path never calls a model.
 

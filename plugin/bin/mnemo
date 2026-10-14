@@ -1,4 +1,7 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+# SPDX-License-Identifier: Apache-2.0
+
 # Launches mnemo for the plugin: the `mnemo` binary on the PATH. It never downloads anything by
 # itself: a binary fetched from the network and run on every turn, with no signature or checksum,
 # is exactly what nobody wants on their machine. It never breaks the Claude Code turn: if mnemo is

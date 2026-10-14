@@ -1,1 +1,6 @@
+<!--
+SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#3B5BDB"/><path d="M8.5 23V14.5a3.75 3.75 0 0 1 7.5 0V23M16 14.5a3.75 3.75 0 0 1 7.5 0V19" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="23.5" cy="23.2" r="1.9" fill="#fff"/></svg>

@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+# SPDX-License-Identifier: Apache-2.0
+
+version = 1
+
+# Generated files and formats that cannot carry comment headers.
+[[annotations]]
+path = [
+  "Cargo.lock",
+  ".claude-plugin/marketplace.json",
+  "integrations/codex/hooks.json",
+  "plugin/.claude-plugin/plugin.json",
+  "plugin/.mcp.json",
+  "plugin/hooks/hooks.json",
+  "web/manifest.webmanifest",
+  "web/icons/*.png",
+  "web/icons/*.ico",
+  "docs/images/*.png",
+  "deploy/release-key.pub",
+]
+SPDX-FileCopyrightText = "2026 Mario Campos <https://github.com/mariojcr>"
+SPDX-License-Identifier = "Apache-2.0"
+
+# The bundled typefaces retain their upstream attribution and license.
+[[annotations]]
+path = ["web/fonts/*.woff2", "web/fonts/OFL.txt"]
+SPDX-FileCopyrightText = "2023 Vercel, in collaboration with basement.studio"
+SPDX-License-Identifier = "OFL-1.1"

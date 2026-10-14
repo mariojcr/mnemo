@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+# SPDX-License-Identifier: Apache-2.0
+
 .PHONY: build test test-ch test-replicated test-replicated-ch fmt lint integration image bench run release
 
 RUST_IMAGE ?= docker.io/library/rust:1.98.1-slim-trixie

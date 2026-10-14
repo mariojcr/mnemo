@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! In-memory store with the ClickHouse contract, for unit tests. ClickHouse specifics (SQL,
 //! `FINAL`, the writer lease) are only covered by `conformance` against a real database.
 

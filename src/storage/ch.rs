@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! ClickHouse store: immutable `episodes`, an append-only `log` (last row per id is current) and
 //! `ReplacingMergeTree` state read with `FINAL`. No conditional writes: a single leased writer.
 

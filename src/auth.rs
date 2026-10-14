@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Who is calling and what they can see. Every memory belongs to one person (`user:<subject>`);
 //! only a `service` (a system that already authorizes its users) may act for another person, and
 //! admins read only their own memory.

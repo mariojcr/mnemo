@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! [`Db`]: distilled data, distillation queue, cursors and keys. [`RawStore`]: immutable episodes.
 //! [`ch::ClickHouse`] implements both; [`mem::Mem`] is the in-memory test double.
 

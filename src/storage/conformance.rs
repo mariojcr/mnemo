@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! The storage contract, run against [`Mem`] and a real ClickHouse (`MNEMO_TEST_CH_URL`). Without
 //! that variable the ClickHouse cases FAIL rather than skip, unless it is set to `skip`.
 

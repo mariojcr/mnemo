@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! The HTTP API: authentication, routing and middleware; each route's work is in [`crate::ops`].
 
 use crate::app::{App, IngestItem, RememberReq};

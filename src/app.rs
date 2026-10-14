@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Shared service state and the operations that span several parts.
 
 use crate::auth::{self, Kind, Principal, Via};

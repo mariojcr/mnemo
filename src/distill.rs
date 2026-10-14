@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Distillation: from raw episodes to six-W memories. Everything the model returns is validated
 //! here: a memory with no supporting episode is dropped, and so is a link to an unknown entity.
 

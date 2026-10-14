@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Storage
 
 ClickHouse is the only store; you provide it (`MNEMO_CH_URL`, mnemo starts none). At every start

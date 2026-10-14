@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! `mnemo update`, only when a person asks: a bare checksum would come from the same registry and
 //! credential as the binary, so CI signs a manifest (checksum, commit, ref, build number) with a
 //! key the registry never sees; only keys compiled in from `deploy/release-key.pub` are trusted.

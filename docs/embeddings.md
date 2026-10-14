@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Embeddings
 
 mnemo computes every vector itself, with **EmbeddingGemma 2** in fp32 on ONNX Runtime, on the

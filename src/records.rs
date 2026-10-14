@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Things with a stable key (an alert, a page, a job): events are never merged, snapshots are
 //! stored only when the content changed. No model is involved.
 

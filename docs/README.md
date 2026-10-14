@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # mnemo documentation
 
 mnemo is long-term memory for agents, models and people. It stores everything it is sent as raw
@@ -39,7 +44,14 @@ flowchart LR
     CH -- "new revisions" --> GLOBE
 ```
 
-## Read in this order
+## Start here
+
+- [Quick start](../README.md#quick-start) and [installation](installation.md).
+- [Client integrations](clients.md).
+- [Data flow and deletion](privacy.md).
+- [Contributing](../CONTRIBUTING.md).
+
+## Technical guides
 
 | Page | What it explains |
 |---|---|

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Entities and six-W memories. Memory text is in English because a model reads it.
 
 use serde::{Deserialize, Serialize};

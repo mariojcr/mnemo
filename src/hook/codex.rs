@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Token usage of a Codex turn. The transcript is not a stable API: never make up zeros.
 
 use super::TurnUsage;

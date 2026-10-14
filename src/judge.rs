@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! The judge: decision service, else the extraction LLM, else a cautious heuristic. It decides
 //! what gets PROMOTED, never what gets stored: discards stay in the raw store.
 

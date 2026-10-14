@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! The map: each root entity is a galaxy and each memory a star among the entities it links.
 //! Positions are hashed from ids (stable); a tile is a contiguous range of a Z-order index.
 

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Human login with OIDC (authorization code + PKCE); with `MNEMO_AUTH=sso`, MCP clients present
 //! the same provider's access tokens. Login state and sessions live in the database, not process
 //! memory: the callback may land on another replica and revocation must reach all of them.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Parsing a question without a model: the W it asks for, the dates it names and its terms.
 
 use crate::model::W;

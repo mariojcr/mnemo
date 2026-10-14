@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Operations
 
 ## Run it
@@ -16,7 +21,8 @@ flowchart LR
 ```
 
 To try it on your machine, `compose.yaml` at the repository root starts ClickHouse and one server on
-`127.0.0.1:7700`. Against your own ClickHouse:
+`127.0.0.1:7700`, using the published image. See [installation](installation.md) for platform
+support and local builds. Against your own ClickHouse:
 
 ```sh
 make image   # builds mnemo:local
@@ -50,6 +56,11 @@ A version tag also pushes the image as `0.2.0` and `latest` (not for a pre-relea
 `v0.2.0-rc.1`) and publishes a GitHub Release with the static client for Linux x86_64, its
 `checksums.txt` and the signed manifest that `mnemo update` installs. Every build carries its
 commit: `mnemo version` and `/v1/whoami` show it.
+
+Add user-facing release notes explaining what changed, who benefits, how to install or upgrade,
+and any compatibility changes or known limitations. Link the binary, container tag and full
+changelog. Update the pinned image in `compose.yaml` and the version examples in the installation
+guide when adopting a new stable release.
 
 The manifest `release.txt` holds the binary's sum plus `commit`, `ref` and `seq`, a build number that
 only grows on main and that no committer chooses: the count of first-parent commits up to the tag,

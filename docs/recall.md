@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Recall
 
 Answering a question needs no model call: the in-memory globe, one local embedding and, when
@@ -102,3 +107,19 @@ explicit `recall` skips none of the above.
 
 The text block cites each memory as `[m:<id>]`, so an agent can open the source with
 `recall_episode`.
+
+## Benchmark scope
+
+`make bench N=1000000` measures the in-memory ranking path over a synthetic index. It creates
+2,000 entities and `N` memories, then runs 2,000 queries without query vectors. It reports build
+time, p50/p95/p99 recall latency and map timings as JSON.
+
+The roughly 8 ms p95 figure previously reported for one million memories describes this path;
+it excludes query embeddings, HTTP, raw-episode fallback and background distillation. The original
+measurement does not include a published hardware profile, so treat it as indicative rather than
+a reproducible cross-machine comparison. The 35–50 ms semantic-recall figure above includes query
+embedding and is a separate observation, not a percentile from this benchmark.
+
+To publish a new result, include the output alongside the commit (`git rev-parse HEAD`), CPU model,
+RAM, OS/container limits, index size and whether the process was warm. For end-to-end latency,
+measure `/v1/recall` separately and state the `semantic` and `raw` settings, concurrency and dataset.
