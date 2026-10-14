@@ -1,6 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+# SPDX-License-Identifier: Apache-2.0
+
 # Quick start: one mnemo server and its ClickHouse, on http://127.0.0.1:7700.
 #
-#   MNEMO_ADMIN_KEY=$(openssl rand -hex 24) docker compose up -d --build
+#   MNEMO_ADMIN_KEY=$(openssl rand -hex 24) docker compose up -d
 #
 # Distillation needs an OpenAI-compatible model (MNEMO_LLM_URL, MNEMO_EXTRACT_MODEL); without one,
 # mnemo still stores everything and finds it again by text. Change the ClickHouse password before
@@ -19,8 +22,7 @@ services:
       - clickhouse:/var/lib/clickhouse
 
   mnemo:
-    build: .
-    image: mnemo:local
+    image: ${MNEMO_IMAGE:-ghcr.io/mariojcr/mnemo:0.1.1}
     depends_on: [clickhouse]
     ports:
       - "127.0.0.1:7700:7700"

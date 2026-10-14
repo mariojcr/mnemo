@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Did the answer use what was injected? A `[m:<id>]` citation is a sure, free use; the rest goes
 //! to the decisions service or a sampled LLM. Unjudged memories never count as useless.
 

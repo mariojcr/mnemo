@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 /* Nothing inline: a strict CSP blocks it, so every style lives here, in classes. */
 @font-face{font-family:"Geist";src:url("fonts/geist.woff2") format("woff2");font-weight:100 900;font-display:swap}
 @font-face{font-family:"Geist Mono";src:url("fonts/geist-mono.woff2") format("woff2");font-weight:100 900;font-display:swap}

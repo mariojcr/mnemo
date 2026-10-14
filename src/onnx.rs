@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! In-process embeddings: EmbeddingGemma 2 (ONNX, 768 dims) on ONNX Runtime, CPU only; mnemo
 //! downloads nothing. fp32, not int8: int8's dynamic quantization is slower on short texts (53
 //! tokens: 50 vs 113 ms) for the same vectors (cosine 0.9999). Measurements: docs/embeddings.md.

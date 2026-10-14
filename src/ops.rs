@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Operations shared by the HTTP API and MCP, so no surface can see more than
 //! another. Scopes come from [`Principal`], not from the client: a user can only narrow them, a
 //! service passes those of the person it acts for.

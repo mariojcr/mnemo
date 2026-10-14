@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! The episode: an immutable unit of raw input with its provenance.
 
 use crate::query::fmt_day;

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! HTTP client behind `mnemo mcp` and `mnemo hook`. It only talks to a configured server
 //! (`MNEMO_URL`): the plugin never starts anything on the local machine.
 

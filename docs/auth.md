@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Auth and scopes
 
 Every memory belongs to one person: its scope is `user:<subject>`. Nothing is global or shared.

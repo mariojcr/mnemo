@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! JSON for the UI and the API, and a text block with citations for the model.
 
 use crate::episode::Episode;

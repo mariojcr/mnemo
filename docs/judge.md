@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # The judge
 
 The judge decides what each candidate memory is, next to the memories that already exist. It

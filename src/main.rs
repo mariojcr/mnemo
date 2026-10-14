@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! mnemo: long-term memory for agents, models and people (subcommands: docs/architecture.md).
 
 #![allow(clippy::collapsible_if)]

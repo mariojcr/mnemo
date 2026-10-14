@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! `mnemo login`: OAuth with PKCE against the provider an SSO-only server advertises (RFC 9728),
 //! like any MCP client, so the plugin works without keys. Tokens go to `~/.mnemo/oauth.json`.
 

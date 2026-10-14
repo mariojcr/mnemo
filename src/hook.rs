@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Claude Code and Codex hooks: `mnemo hook <event> [--client codex]`, with JSON on stdin.
 //! Golden rule: a hook NEVER breaks the turn. Any failure goes to stderr with exit code 0.
 

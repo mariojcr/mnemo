@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Cost and value
 
 Memory that costs more than it helps is not worth having. mnemo measures both sides and acts on

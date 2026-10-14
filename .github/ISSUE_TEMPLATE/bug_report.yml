@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+# SPDX-License-Identifier: Apache-2.0
+
+name: Bug report
+description: Report a reproducible problem with mnemo.
+body:
+  - type: markdown
+    attributes:
+      value: "Remove credentials and private data from examples and logs. For vulnerabilities, follow [SECURITY.md](https://github.com/mariojcr/mnemo/blob/main/SECURITY.md)."
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release tag or output of mnemo version.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, CPU architecture, deployment method and client integration.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Use a minimal example with fictional data.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Optional. Redact secrets, private conversations and internal addresses.
+      render: text

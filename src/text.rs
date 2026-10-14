@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Normalisation, tokens and an in-memory BM25 index. Tokens are cut to a five-letter stem:
 //! crude, but it groups inflections in both languages without a per-language stemmer.
 

@@ -1,4 +1,7 @@
 # syntax=docker/dockerfile:1
+# SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+# SPDX-License-Identifier: Apache-2.0
+
 
 # Base images pinned by the digest of the multi-arch index: a tag moves, a digest does not.
 ARG BASE_REGISTRY=docker.io/library

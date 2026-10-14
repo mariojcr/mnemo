@@ -1,206 +1,178 @@
+<!--
+SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # mnemo
 
-Long-term memory for agents, models and people.
+**Long-term memory for your AI agents.**
 
-mnemo keeps everything you send it as raw episodes, distills them into **memories that answer
-what, who, when, where, why and how** over unique entities (people, teams, systems, repos, files…),
-and searches them in memory without calling a model: about **8 ms at the 95th percentile over a
-million memories**.
+[![Build](https://github.com/mariojcr/mnemo/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/mariojcr/mnemo/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/mariojcr/mnemo)](https://github.com/mariojcr/mnemo/releases)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-- **Distills on its own.** When a conversation goes quiet, a model proposes memories and a judge
-  decides each one against what is already known: new, duplicate, update or contradiction. An update
-  closes the old memory instead of deleting it, so you can always see what was true before.
-- **Recalls before the model answers.** Claude Code and Codex hooks add what mnemo knows to each
-  prompt; any other client can use MCP or plain HTTP.
-- **Measures whether memory helps.** It checks whether each injected memory was used and stops
-  injecting the ones that never are.
-- **One binary, one ClickHouse.** Every memory belongs to one person; sign-in with keys or any OIDC
-  provider.
+Stop repeating your project context every session. mnemo remembers conversations, keeps track of
+changing facts, and brings relevant context back to **Claude Code, Codex, and other MCP clients**.
+Run it on your own infrastructure, with the model provider you choose.
 
-Documentation: [docs/](docs/README.md) — architecture, data model, distillation, the judge, recall,
-embeddings, storage, auth, clients, cost and value, operations.
+[Quick start](#quick-start) · [Connect your agent](#connect-your-agent) · [Documentation](docs/README.md) · [Releases](https://github.com/mariojcr/mnemo/releases)
+
+![mnemo search showing a project decision, its reason and related entities](docs/images/recall.png)
+*The actual web UI, with fictional project data. Search your memories or explore their connections on the map.*
+
+## Why mnemo?
+
+- **Carry context between sessions and clients.** Hooks store conversation turns and recall relevant
+  memories before your agent answers. MCP and HTTP let other tools use the same personal memory.
+- **Remember why, not just what.** Memories capture who, when, where, why and how; memories distilled
+  from conversations link back to their source episodes.
+- **Keep changing facts straight.** A judge checks new information against existing memories. Updates
+  close the old memory instead of erasing its history.
+- **Keep context useful.** Session budgets and deduplication limit injections; usage evaluation can
+  mute memories that repeatedly go unused.
+- **Own the deployment.** One Rust binary and ClickHouse, local CPU embeddings, API keys or OIDC.
+  Distillation uses an OpenAI-compatible endpoint you configure.
+
+For example: record *“We chose PostgreSQL for Atlas because billing needs transactions.”* In a
+later session, ask *“Why does Atlas use PostgreSQL?”* mnemo retrieves the decision and its reason
+for the agent. You can try the storage and recall part below without configuring an LLM.
 
 ## Quick start
 
-mnemo stores everything in ClickHouse. [`compose.yaml`](compose.yaml) runs both:
+You need **Git, Docker with Compose, curl and OpenSSL**, on **Linux x86_64**. Commands below work
+in a POSIX shell. The published image includes the embedding model; allow roughly 1.3 GB for the
+mnemo image, plus ClickHouse and your data. Native macOS, Windows and ARM64 binaries are not
+published. See [installation and platform support](docs/installation.md).
 
 ```sh
+git clone https://github.com/mariojcr/mnemo.git
+cd mnemo
 export MNEMO_ADMIN_KEY=$(openssl rand -hex 24)
-docker compose up -d --build        # http://127.0.0.1:7700
+docker compose up -d
+curl --fail --retry 30 --retry-connrefused --retry-delay 2 http://127.0.0.1:7700/healthz
 ```
 
-Remember something and ask for it back:
+Compose downloads the published release; no Rust compilation is needed. Keep this shell open so
+subsequent commands use the same admin key. The server listens only on `127.0.0.1:7700`.
+
+Store a decision:
 
 ```sh
-auth=(-H "Authorization: Bearer $MNEMO_ADMIN_KEY" -H "Content-Type: application/json")
-curl -s localhost:7700/v1/memories "${auth[@]}" \
-  -d '{"scope": "user:admin", "what": "The staging database runs PostgreSQL 17.", "kind": "fact"}'
-curl -s localhost:7700/v1/recall "${auth[@]}" -d '{"query": "which postgres does staging use?"}'
+curl --fail-with-body -sS http://127.0.0.1:7700/v1/memories \
+  -H "Authorization: Bearer $MNEMO_ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{"scope":"user:admin","kind":"decision","what":"Atlas uses PostgreSQL for billing.","why":"Billing needs transactions.","about":["Atlas","PostgreSQL"]}'
 ```
 
-To distill conversations, give it an OpenAI-compatible model (Ollama, vLLM, llama.cpp, OpenRouter…):
+Ask for it back:
 
 ```sh
-MNEMO_LLM_URL=http://host.docker.internal:11434/v1 MNEMO_EXTRACT_MODEL=qwen3:14b docker compose up -d
+curl --fail-with-body -sS http://127.0.0.1:7700/v1/recall \
+  -H "Authorization: Bearer $MNEMO_ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{"query":"Why does Atlas use PostgreSQL?"}'
 ```
 
-Without one, mnemo still stores everything and finds it again by text and meaning. For yourself and
-each person, create a key instead of sharing the admin key:
+The response includes ranked `items` and a `text` block containing the decision, its reason and a
+memory citation. Open **http://127.0.0.1:7700** and sign in with the same admin key to search in the
+web UI. `docker compose down` stops the services and keeps their data volumes.
+
+### Turn conversations into memories
+
+Storage and recall work without an LLM. Automatic distillation needs an OpenAI-compatible endpoint
+and a model already available there, for example Ollama with `qwen3:14b`:
 
 ```sh
-docker compose exec mnemo mnemo key create --subject ana   # prints the key once
+export MNEMO_LLM_URL=http://host.docker.internal:11434/v1
+export MNEMO_EXTRACT_MODEL=qwen3:14b
+docker compose up -d
 ```
 
-## Claude Code
+The endpoint must be reachable from the container; a host service bound only to `127.0.0.1` may
+need its listen address adjusted. For a hosted provider, set its `/v1` URL and `MNEMO_LLM_KEY`.
+mnemo does not start or download your extraction model. [Model configuration](docs/operations.md#models).
+
+## Connect your agent
+
+Create a personal key instead of giving an agent your admin key:
+
+```sh
+docker compose exec mnemo mnemo key create --subject ana
+```
+
+The key is printed once. It owns a separate memory scope: the admin's quick-start memory will not
+appear for `ana`. Install the [signed client binary](docs/installation.md#install-the-client), then
+set `MNEMO_URL=http://127.0.0.1:7700` and `MNEMO_KEY=mnemo_…` in `~/.mnemo/config.env`.
+
+### Claude Code
 
 ```text
 /plugin marketplace add https://github.com/mariojcr/mnemo.git
 /plugin install mnemo@mnemo
 ```
 
-The plugin:
+The plugin stores your prompt and final answer, recalls context before each turn, and adds the
+`recall`, `remember`, `forget`, `keep` and `recall_episode` tools. It requires `mnemo` on your
+`PATH`. [Setup and hook behavior](docs/clients.md#claude-code-plugin).
 
-- **remembers each turn**: your prompt and Claude's final answer go to mnemo as episodes;
-- **recalls before each turn**: what mnemo knows about your prompt is added to Claude's context;
-- **knows the repo**: each session starts with what is known about the repository you are in;
-- **adds tools**: `recall`, `remember`, `forget` and `recall_episode`, over MCP.
+### Codex
 
-It talks to the server you point it to and never starts anything on your machine. Put
-`MNEMO_URL=https://mnemo.example.com` and `MNEMO_KEY=mnemo_…` in `~/.mnemo/config.env` (the
-environment wins over the file). On an SSO-only server, run `mnemo login https://mnemo.example.com`
-once instead of using a key; see [docs/clients.md](docs/clients.md).
+Register `mnemo mcp` and install the hooks from
+[`integrations/codex/hooks.json`](integrations/codex/hooks.json).
+[Complete setup](docs/clients.md#codex).
 
-The plugin uses the `mnemo` binary from your `PATH`. Each [release](https://github.com/mariojcr/mnemo/releases)
-publishes a static Linux x86_64 build with `release.txt`, a manifest of its sum and its commit, tag
-and build number, signed (Ed25519); the public key is `deploy/release-key.pub`. Install it once,
-checking the signature and the sum:
+### Other MCP and HTTP clients
 
-```sh
-base=https://github.com/mariojcr/mnemo/releases/latest/download
-curl -fsSLO https://raw.githubusercontent.com/mariojcr/mnemo/main/deploy/release-key.pub
-curl -fsSLO $base/mnemo-linux-x86_64 && curl -fsSLO $base/release.txt && curl -fsSLO $base/release.txt.sig
-base64 -d release.txt.sig > release.sig.raw \
-  && openssl pkeyutl -verify -pubin -inkey release-key.pub -rawin -in release.txt -sigfile release.sig.raw \
-  && grep '^ref refs/tags/v' release.txt && grep '^commit' release.txt \
-  && grep ' mnemo-linux-x86_64$' release.txt | sha256sum -c && install -m 755 mnemo-linux-x86_64 ~/.local/bin/mnemo
-```
-
-From then on `mnemo update` does the same in place, with the public key built in, and refuses a
-build older than the one you have (`--allow-downgrade` to go back on purpose).
-
-## Codex
-
-The same binary and login work in Codex: register `mnemo mcp` and install the hooks in
-[`integrations/codex/hooks.json`](integrations/codex/hooks.json). See
-[docs/clients.md](docs/clients.md#codex).
-
-## Other clients
-
-**MCP**, over HTTP at `/mcp` or over stdio with `mnemo mcp`:
+Connect over HTTP at `/mcp`, or use `mnemo mcp` for stdio. For a client supporting HTTP MCP:
 
 ```json
-{ "mcpServers": {
-    "mnemo": { "type": "http", "url": "https://mnemo.example.com/mcp", "headers": { "Authorization": "Bearer mnemo_…" } } } }
+{
+  "mcpServers": {
+    "mnemo": {
+      "type": "http",
+      "url": "http://127.0.0.1:7700/mcp",
+      "headers": {"Authorization": "Bearer mnemo_…"}
+    }
+  }
+}
 ```
 
-**HTTP**:
+Remote clients need a server URL they can reach. [MCP tools and HTTP API](docs/clients.md#mcp-tools).
 
-| Route | What it does |
-|---|---|
-| `POST /v1/recall` | `{query, limit?, as_of?, w?, entities?, since?, until?, semantic?, raw?, budget_tokens?}`: ranked memories, raw excerpts if needed, and a `text` block ready for a model. |
-| `POST /v1/memories` | Store a memory: `{scope, what, why?, how?, kind?, who?, where?, about?, occurred_at?}`. Returns `inserted`, `duplicate` or `superseded`. |
-| `POST /v1/forget` | `{id, reason}`: close a memory. |
-| `POST /v1/episodes` | `{episodes, cursor?}`: raw episodes; a source's cursor advances only if the batch was stored. |
-| `GET /v1/episodes/{id}?around=` | An episode with its neighbours in the thread. |
-| `POST /v1/entities`, `GET /v1/entities/{id}` | Entities, and an entity's card with its timeline. |
-| `POST /v1/records`, `GET /v1/records?key=` | Records of things: events (open, close or point) and snapshots. |
-| `GET /v1/globe`, `GET /v1/stats`, `GET /v1/whoami` | Everything visible, counts, and who you are. |
-| `GET /v1/galaxy?z&x&y` | A tile of the map. |
-| `DELETE /v1/owners/{id}` | Delete everything of a person, raw episodes included. |
+## Data and privacy
 
-The server also serves a web UI at `/`: a map of everything you know (entities as galaxies and
-systems, memories as dust between them), search, and an admin panel.
+Episodes and memories stay in your ClickHouse deployment. Embeddings run locally on the CPU.
+When enabled, extraction, judging and usage evaluation send relevant content to the model endpoints
+you configure. Recall results become context for the agent and its model provider.
 
-## Configuration
+Hooks capture prompts and final answers, which may include sensitive project information. Each
+person has their own memory scope; service keys can access the personal scopes they are authorized
+to serve. `forget` closes a memory; it does not erase its source episodes.
+[Data flow, access and deletion](docs/privacy.md).
 
-### Models
+## Performance and limits
 
-Extraction and judging use endpoints you configure; mnemo starts no model. Embeddings are computed
-inside mnemo (EmbeddingGemma 2 on ONNX Runtime, on the CPU, about 50 ms per memory); the image ships
-the model.
+Recall ranks memories in RAM without a generative LLM call. Semantic recall also computes a local
+query embedding. The synthetic in-memory benchmark has measured roughly **8 ms p95 over one
+million memories**; this excludes embeddings, HTTP and storage fallback. Typical semantic recall
+is documented at **35–50 ms including query embedding**, a different measurement rather than a
+latency guarantee. [Benchmark scope and reproduction](docs/recall.md#benchmark-scope).
 
-| Variable | What it does |
-|---|---|
-| `MNEMO_LLM_URL`, `MNEMO_LLM_KEY` | OpenAI-compatible root (`…/v1`) for extraction. |
-| `MNEMO_EXTRACT_MODEL` | The model that turns conversations into memories. Without it, nothing is distilled. |
-| `MNEMO_LLM_JSON=1`, `MNEMO_LLM_THINKING=off` | Ask for schema-constrained JSON, and ask a reasoning model not to think first (some return empty JSON after a long think). |
-| `MNEMO_DECIDE_URL`, `MNEMO_DECIDE_MODEL`, `MNEMO_DECIDE_KEY` | Optional typed-decisions service (`POST /decisions`) to judge with calibrated probabilities. |
-| `MNEMO_JUDGE` | `auto` (decisions, else the extraction model, else a heuristic), `decisions`, `llm` or `heuristic`. |
-| `MNEMO_EMBED_DIR`, `MNEMO_EMBED_THREADS`, `MNEMO_EMBED=off` | Embedding model files outside the image, CPU threads (4), or semantic search off. |
+mnemo is early software. Published builds currently target Linux x86_64, each server keeps its
+search index in RAM, and each database has one writer. Distillation quality depends on the model
+and should be checked against source episodes. [Architecture](docs/architecture.md) · [Operations](docs/operations.md).
 
-A small model works if it supports constrained JSON: on real work sessions in English and Spanish,
-Gemma 4 E4B judged 8 of 8 relations right and extracted correct facts; 2B models broke the schema.
+## Contributing
 
-### Keys, scopes and sign-in
+Bug reports, documentation fixes and reproducible examples are welcome. Start with
+[CONTRIBUTING.md](CONTRIBUTING.md), or [open an issue](https://github.com/mariojcr/mnemo/issues).
+For security concerns, follow [SECURITY.md](SECURITY.md).
 
-Every memory belongs to one person (`user:<id>`); nothing is global or shared. Every request carries a
-key, a session or an OAuth token; there is no keyless mode.
-
-| Kind | Sees and writes |
-|---|---|
-| `user` | its own memory |
-| `service` | the personal scopes it passes: a system that already authorizes its users; with `X-Mnemo-Act-As` a request becomes that person's ([docs/auth.md](docs/auth.md#acting-for-someone)) |
-| `admin` | its own memory; manages keys and people, but does not read anyone else's |
-
-People can sign in to the UI with any OIDC provider and create their own keys (up to 90 days):
+Development builds and tests run in containers:
 
 ```sh
-MNEMO_OIDC_ISSUER=https://sso.example.com/realms/acme
-MNEMO_OIDC_CLIENT_ID=mnemo MNEMO_OIDC_CLIENT_SECRET=…
-MNEMO_BASE_URL=https://mnemo.example.com          # the redirect is <base>/auth/callback
-MNEMO_ADMIN_GROUPS=mnemo-admins                     # or MNEMO_ADMIN_EMAILS
-```
-
-For a server on the internet, `MNEMO_AUTH=sso` disables keys entirely, and `/mcp` becomes an OAuth
-protected resource so MCP clients such as Claude sign in with your provider. See
-[docs/auth.md](docs/auth.md).
-
-### Scaling
-
-There is one writer per database: `mnemo serve` hands out the log sequence and distills, and holds a
-lease in ClickHouse so a second `serve` refuses to start. Read replicas forward writes to it:
-
-```sh
-MNEMO_CH_URL=http://clickhouse:8123 MNEMO_WRITER_URL=http://mnemo-writer:7700 mnemo api
-```
-
-### Cost and value
-
-The **Usage** view (and `GET /v1/cost`) shows what share of session input is memory, how often
-an injected memory was used, and what mnemo spends in the background. A session never receives the
-same memory twice, automatic injection stops at `MNEMO_SESSION_BUDGET_TOKENS` (4000) per session, and
-a memory judged useless `MNEMO_MUTE_AFTER` times (6) stops being injected. See
-[docs/value.md](docs/value.md).
-
-## How it works
-
-1. **Ingest everything, raw.** Episodes are immutable and keep who, where and when.
-2. **Distill when a thread settles.** The extraction model proposes memories with their six W's;
-   the judge decides each one ([distillation](docs/distillation.md), [the judge](docs/judge.md)).
-3. **Recall fast.** Each server keeps the globe in memory and ranks without a model
-   ([recall](docs/recall.md)).
-
-Memory text is stored in English, because models read it.
-
-## Development
-
-Everything builds and runs in a container; no Rust on the host.
-
-```sh
-make test          # fmt, clippy, unit tests and the storage suite against a throwaway ClickHouse
+make test             # fmt, clippy, unit tests and a ClickHouse storage suite
 make bench N=1000000
-make image         # runtime image
-make release       # static Linux binary in dist/
+make image           # builds mnemo:local
+MNEMO_IMAGE=mnemo:local docker compose up -d
 ```
 
 ## License

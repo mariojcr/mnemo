@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Mario Campos <https://github.com/mariojcr>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Hard facts, to veto merging two memories. An embedding says they talk about the same thing,
 //! not that they say it: "the LB cuts at 120 s" vs "at 600 s" scores 0.947, above many paraphrases
 //! (0.88-0.96). The vector proposes; this vetoes.
