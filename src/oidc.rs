@@ -602,7 +602,7 @@ pub(crate) mod tests {
 
     fn claims(extra: Value) -> Value {
         let now = crate::app::now_ms() / 1000;
-        let mut c = json!({"iss": "https://idp", "aud": "mnemo", "sub": "u-1", "email_verified": true, "exp": now + 300, "iat": now, "nonce": "n1", "email": "Ana@Example.com", "name": "Ana",
+        let mut c = json!({"iss": "https://idp", "aud": "mnemo", "sub": "u-1", "email_verified": true, "exp": now + 300, "iat": now, "nonce": random_hex(32), "email": "Ana@Example.com", "name": "Ana",
             "groups": ["/plat", "/mnemo-admins", "/team-data/sub"]});
         for (k, v) in extra.as_object().unwrap() {
             c[k] = v.clone();
@@ -613,12 +613,14 @@ pub(crate) mod tests {
     #[test]
     fn a_good_token_verifies_and_maps_to_an_identity() {
         let (k, set) = keypair("k1");
+        let issued = claims(json!({}));
+        let nonce = issued["nonce"].as_str().unwrap();
         let c = verify(
             &set,
-            &token(&k, "k1", claims(json!({}))),
+            &token(&k, "k1", issued.clone()),
             "https://idp",
             "mnemo",
-            "n1",
+            nonce,
         )
         .unwrap();
         let cfg = Cfg {
@@ -684,38 +686,39 @@ pub(crate) mod tests {
     #[test]
     fn tampered_or_foreign_tokens_are_rejected() {
         let (k, set) = keypair("k1");
-        let good = token(&k, "k1", claims(json!({})));
+        let issued = claims(json!({}));
+        let nonce = issued["nonce"].as_str().unwrap();
+        let good = token(&k, "k1", issued.clone());
+        assert!(verify(&set, &good, "https://idp", "mnemo", nonce).is_ok());
         assert!(
-            verify(&set, &good, "https://idp", "other-client", "n1").is_err(),
+            verify(&set, &good, "https://idp", "other-client", nonce).is_err(),
             "audience of another client"
         );
         assert!(
-            verify(&set, &good, "https://evil", "mnemo", "n1").is_err(),
+            verify(&set, &good, "https://evil", "mnemo", nonce).is_err(),
             "another issuer"
         );
         assert!(
-            verify(&set, &good, "https://idp", "mnemo", "n2")
+            verify(&set, &good, "https://idp", "mnemo", &random_hex(32))
                 .unwrap_err()
                 .contains("nonce"),
             "nonce from another login"
         );
-        let expired = token(
-            &k,
-            "k1",
-            claims(json!({"exp": crate::app::now_ms() / 1000 - 3600})),
-        );
+        let mut expired_claims = issued.clone();
+        expired_claims["exp"] = json!(crate::app::now_ms() / 1000 - 3600);
+        let expired = token(&k, "k1", expired_claims);
         assert!(
-            verify(&set, &expired, "https://idp", "mnemo", "n1").is_err(),
+            verify(&set, &expired, "https://idp", "mnemo", nonce).is_err(),
             "expired"
         );
         let (other, _) = keypair("k1");
         assert!(
             verify(
                 &set,
-                &token(&other, "k1", claims(json!({}))),
+                &token(&other, "k1", issued.clone()),
                 "https://idp",
                 "mnemo",
-                "n1"
+                nonce
             )
             .is_err(),
             "signed with another key"
@@ -723,20 +726,22 @@ pub(crate) mod tests {
         assert!(
             verify(
                 &set,
-                &token(&k, "k9", claims(json!({}))),
+                &token(&k, "k9", issued.clone()),
                 "https://idp",
                 "mnemo",
-                "n1"
+                nonce
             )
             .unwrap_err()
             .contains("kid")
         );
         let mut parts: Vec<&str> = good.split('.').collect();
-        let forged = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(claims(json!({"email": "admin@example.com"})).to_string());
+        let mut forged_claims = issued.clone();
+        forged_claims["email"] = json!("admin@example.com");
+        let forged =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(forged_claims.to_string());
         parts[1] = &forged;
         assert!(
-            verify(&set, &parts.join("."), "https://idp", "mnemo", "n1").is_err(),
+            verify(&set, &parts.join("."), "https://idp", "mnemo", nonce).is_err(),
             "claims changed after signing"
         );
     }

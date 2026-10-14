@@ -17,7 +17,7 @@ For vulnerabilities, follow [SECURITY.md](SECURITY.md).
 
 ## Develop and check a change
 
-Git, Docker and Make are required. Rust builds and tests run in containers; no host Rust installation
+Git, Docker, Make and OpenSSL are required. Rust builds and tests run in containers; no host Rust installation
 is needed. Read the [architecture](docs/architecture.md) and the documentation for the component you
 are changing.
 

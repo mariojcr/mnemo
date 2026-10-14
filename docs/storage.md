@@ -189,6 +189,11 @@ a real ClickHouse at `MNEMO_TEST_CH_URL` (each test in its own database, dropped
 `make test` starts a throwaway ClickHouse for it. Without that variable the ClickHouse cases fail
 rather than skip; `MNEMO_TEST_CH_URL=skip` skips them.
 
+The Make targets generate a password for each new test ClickHouse setup and pass it to the tests;
+reused containers keep their original credentials. When running Cargo directly against your own
+test server, set `MNEMO_TEST_CH_PASSWORD` explicitly (and `MNEMO_TEST_CH_USER` if it is not `mnemo`).
+There is no fallback password in the Rust tests.
+
 `make test-replicated` starts two replicas and a Keeper (`tests/replicated/`) and runs the same
 contract on a `Replicated` database, plus the cases that only happen between replicas: a row seen
 before the previous one, a writer building on its own last version, sequence numbers after a writer

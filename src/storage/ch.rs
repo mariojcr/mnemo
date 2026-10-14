@@ -1922,7 +1922,8 @@ mod tests {
         let urls: Vec<&str> = urls.split(',').collect();
         assert_eq!(urls.len(), 2, "two replicas");
         let user = std::env::var("MNEMO_TEST_CH_USER").unwrap_or_else(|_| "mnemo".into());
-        let pass = std::env::var("MNEMO_TEST_CH_PASSWORD").unwrap_or_else(|_| "mnemo".into());
+        let pass = std::env::var("MNEMO_TEST_CH_PASSWORD")
+            .expect("MNEMO_TEST_CH_PASSWORD not set: use the password of the test ClickHouse");
         let db = format!("mnemo_rtest_{test}_{}", uuid::Uuid::new_v4().simple());
         let a = ClickHouse::new(urls[0], &db, &user, &pass)
             .unwrap()

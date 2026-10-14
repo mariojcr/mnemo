@@ -246,8 +246,10 @@ impl Map {
 }
 
 /// FNV-1a, stable across versions and machines (std's hash is not), mapped to [0, 1).
-fn h(id: &str, salt: u64) -> f64 {
-    let mut x: u64 = 0xcbf29ce484222325 ^ salt.wrapping_mul(0x100000001b3);
+/// Each channel selects a layout dimension (angle, radius or jitter). These fixed selectors
+/// keep positions stable; this hash is for drawing the map, not cryptography.
+fn layout_fraction(id: &str, channel: u64) -> f64 {
+    let mut x: u64 = 0xcbf29ce484222325 ^ channel.wrapping_mul(0x100000001b3);
     for b in id.bytes() {
         x ^= b as u64;
         x = x.wrapping_mul(0x100000001b3);
@@ -268,12 +270,15 @@ fn kind_idx(kind: &str) -> u8 {
 
 fn spiral(id: &str) -> (f64, f64) {
     let arms = 4.0;
-    let arm = (h(id, 21) * arms).floor();
-    let t = h(id, 22).powf(0.8);
+    let arm = (layout_fraction(id, 21) * arms).floor();
+    let t = layout_fraction(id, 22).powf(0.8);
     let r = 0.05 + 0.40 * t;
-    let a = arm * TAU / arms + 3.4 * t + (h(id, 23) - 0.5) * 0.45;
+    let a = arm * TAU / arms + 3.4 * t + (layout_fraction(id, 23) - 0.5) * 0.45;
     let spread = 0.012 + 0.03 * t;
-    let (jx, jy) = ((h(id, 24) - 0.5) * spread, (h(id, 25) - 0.5) * spread);
+    let (jx, jy) = (
+        (layout_fraction(id, 24) - 0.5) * spread,
+        (layout_fraction(id, 25) - 0.5) * spread,
+    );
     (0.5 + r * a.cos() + jx, 0.5 + r * a.sin() + jy)
 }
 
@@ -364,7 +369,10 @@ pub fn relayout(g: &mut Globe) {
         let links = &g.mem_links[i];
         let kind = memory_kind_idx(&m.kind);
         let pos = if links.is_empty() {
-            let (a, r) = (h(&m.id, 11) * TAU, 0.48 * h(&m.id, 12).sqrt());
+            let (a, r) = (
+                layout_fraction(&m.id, 11) * TAU,
+                0.48 * layout_fraction(&m.id, 12).sqrt(),
+            );
             (0.5 + r * a.cos(), 0.5 + r * a.sin())
         } else {
             let (mut sx, mut sy) = (0.0, 0.0);
@@ -379,7 +387,10 @@ pub fn relayout(g: &mut Globe) {
                 sy += p.1 as f64;
             }
             let k = links.len() as f64;
-            let (a, r) = (h(&m.id, 13) * TAU, 0.0022 * (0.15 + h(&m.id, 14)));
+            let (a, r) = (
+                layout_fraction(&m.id, 13) * TAU,
+                0.0022 * (0.15 + layout_fraction(&m.id, 14)),
+            );
             (sx / k + r * a.cos(), sy / k + r * a.sin())
         };
         g.map.mem_pos[i] = (clamp01(pos.0), clamp01(pos.1));
@@ -454,8 +465,8 @@ fn layout_entities(g: &mut Globe) {
                 let (pp, pd) = place(g, pi, pos, gkind, guard + 1);
                 gkind[i] = gkind[pi];
                 let depth = pd + 1;
-                let r = arm(depth) * (0.3 + 0.7 * h(&e.id, 3));
-                let a = h(&e.id, 4) * TAU + 1.6 * r / arm(depth);
+                let r = arm(depth) * (0.3 + 0.7 * layout_fraction(&e.id, 3));
+                let a = layout_fraction(&e.id, 4) * TAU + 1.6 * r / arm(depth);
                 ((pp.0 + r * a.cos(), pp.1 + r * a.sin()), depth)
             }
             _ => {
