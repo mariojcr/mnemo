@@ -359,9 +359,12 @@ pub async fn turn(app: &std::sync::Arc<App>, p: &Principal, t: TurnInput) -> Res
         output_tokens: t.output_tokens,
         calls: t.calls,
     };
+    // The window closes now, before answering: by the time the judge runs, the client may already
+    // have started its next turn.
+    let (turn, injected) = app.close_turn(turn).await.map_err(OpError::Internal)?;
     let app = app.clone();
     tokio::spawn(async move {
-        if let Err(e) = app.finish_turn(turn, t.answer).await {
+        if let Err(e) = app.judge_turn(&turn, &injected, &t.answer).await {
             log::warn!("turn: {e}");
         }
     });
@@ -1457,6 +1460,57 @@ mod tests {
                 .map(|i| i.tokens)
                 .sum::<u64>()
                 <= 120
+        );
+    }
+
+    #[tokio::test]
+    async fn a_turn_closes_its_window_when_the_report_arrives() {
+        let a = Arc::new(app().await);
+        let ana = user("ana");
+        let m = remember(
+            &a,
+            &ana,
+            RememberReq {
+                what: "Staging is rebuilt every Monday".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        a.refresh().await.unwrap();
+        // Like a front end that rebuilds the block every turn: the memory is injected each time.
+        let ask = || {
+            let mut r = auto("when is staging rebuilt?", "prompt", "s1");
+            r.persists = Some(false);
+            recall(&a, &ana, r)
+        };
+        // Timestamps are milliseconds: an injection, its report and the next turn are seconds apart
+        // in real use, and here they are kept apart with a BLOCKING sleep, so that the judge
+        // spawned by `turn` cannot run before the next turn asks (this runtime has one thread).
+        let apart = || std::thread::sleep(std::time::Duration::from_millis(3));
+        ask().await.unwrap();
+        apart();
+        let report = TurnInput {
+            session: "s1".into(),
+            answer: format!("Every Monday [m:{}].", m.id),
+            ..Default::default()
+        };
+        turn(&a, &ana, report).await.unwrap();
+        apart();
+        // The next turn asks again before the judge of the first one has run.
+        ask().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let rows = a.db.meter_rows(0, None).await.unwrap();
+        assert_eq!(rows.evals.len(), 1, "the first turn is judged once");
+        let next = crate::meter::Turn {
+            subject: "ana".into(),
+            session: "ana/s1".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            a.finish_turn(next, "unrelated".into()).await.unwrap(),
+            1,
+            "the next turn's injection belongs to the next report, not to the one already sent"
         );
     }
 
