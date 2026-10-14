@@ -47,7 +47,8 @@ async fn clickhouse(test: &str) -> Option<ClickHouse> {
         return None;
     }
     let user = std::env::var("MNEMO_TEST_CH_USER").unwrap_or_else(|_| "mnemo".into());
-    let pass = std::env::var("MNEMO_TEST_CH_PASSWORD").unwrap_or_else(|_| "mnemo".into());
+    let pass = std::env::var("MNEMO_TEST_CH_PASSWORD")
+        .expect("MNEMO_TEST_CH_PASSWORD not set: use the password of the test ClickHouse");
     let db = format!("mnemo_test_{test}_{}", uuid::Uuid::new_v4().simple());
     let replicas = replicas();
     let ch = ClickHouse::new(&url, &db, &user, &pass)
