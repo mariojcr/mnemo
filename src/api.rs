@@ -152,15 +152,16 @@ fn act_as(
 }
 
 /// Whoever acts for a person only shows them their memory; the account and the rest stay theirs.
+/// Reporting a finished turn is allowed: it only judges what was injected into that person's
+/// sessions, which the same front end already writes and reads for them.
 fn delegated_route_refused(path: &str) -> bool {
-    const ROUTES: [&str; 8] = [
+    const ROUTES: [&str; 7] = [
         "/v1/keys",
         "/v1/me",
         "/v1/admin",
         "/v1/owners",
         "/v1/cost",
         "/v1/cursors",
-        "/v1/turns",
         "/mcp",
     ];
     ROUTES.iter().any(|r| {
@@ -1689,7 +1690,6 @@ mod tests {
             ("DELETE", "/v1/owners/bob"),
             ("GET", "/v1/cost"),
             ("GET", "/v1/cursors/x"),
-            ("POST", "/v1/turns"),
             ("POST", "/mcp"),
         ] {
             let r = c
@@ -1707,6 +1707,20 @@ mod tests {
             let r = get(path, &svc, Some("bob")).send().await.unwrap();
             assert_eq!(r.status(), 200, "{path}");
         }
+        let r = c
+            .post(format!("{base}/v1/turns"))
+            .bearer_auth(&svc)
+            .header(ACT_AS, "bob")
+            .json(&json!({"session": "s9", "source": "plane", "answer": "done"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 202, "a delegated turn is accepted");
+        assert_eq!(
+            r.headers().get(ACTING_AS).and_then(|v| v.to_str().ok()),
+            Some("bob"),
+            "and answered as bob, whose sessions it judges"
+        );
     }
 
     #[test]

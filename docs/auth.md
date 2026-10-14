@@ -54,8 +54,9 @@ is; mnemo decides the scopes.
 - **Which subject:** exactly one header, non-empty, at most 256 bytes, without `:`, `,`, whitespace
   or control characters; anything else is a `400`.
 - **What it reaches:** the memory (recall, the map, memories, episodes, entities, records,
-  forgetting, sending episodes). `/v1/keys`, `/v1/me/*`, `/v1/admin/*`, `/v1/owners/*`, `/v1/cost`,
-  `/v1/cursors/*`, `/v1/turns` and `/mcp` answer `403`.
+  forgetting, sending episodes) and reporting a finished turn (`/v1/turns`), so that what was
+  injected into that person's sessions is judged and, if never used, muted. `/v1/keys`, `/v1/me/*`,
+  `/v1/admin/*`, `/v1/owners/*`, `/v1/cost`, `/v1/cursors/*` and `/mcp` answer `403`.
 - `/v1/whoami` says `"via": "delegated"`, and the web then shows only the map and search: no sign-in,
   sign-out, account or admin.
 - **Every delegated response carries `X-Mnemo-Acting-As: <subject>`.** The front end must check it on

@@ -20,7 +20,9 @@ flowchart LR
 ## Was it used?
 
 When a client reports a finished turn and its answer (`POST /v1/turns`), each memory injected
-since the previous turn is judged once:
+since the previous turn, up to the moment the report arrives, is judged once. The window closes on
+arrival and the judging runs later, so a client that starts its next turn at once does not have
+that turn's memory judged against the previous answer:
 
 ```mermaid
 flowchart TB

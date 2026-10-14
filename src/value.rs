@@ -49,20 +49,44 @@ fn sampled(rate: f64) -> bool {
 }
 
 impl App {
-    pub async fn finish_turn(&self, mut t: Turn, answer: String) -> Result<usize, String> {
+    /// Close and judge at once: what the tests need. The handler splits it (`turn` in ops.rs).
+    #[cfg(test)]
+    pub async fn finish_turn(&self, t: Turn, answer: String) -> Result<usize, String> {
+        let (t, injected) = self.close_turn(t).await?;
+        self.judge_turn(&t, &injected, &answer).await
+    }
+
+    /// Closes the turn's window when its report arrives: records the turn and takes what was
+    /// injected into the session since the previous one. Judging comes later, in the background;
+    /// closing then would also take what the next turn already injected (a client that asks again
+    /// at once, the next step of a workflow) and judge it against this answer.
+    pub async fn close_turn(&self, mut t: Turn) -> Result<(Turn, Vec<Injection>), String> {
         let last = self.db.last_turn_at(&t.session).await?;
+        // The edge is inclusive. An injection that lands in the same millisecond right after the
+        // report falls in neither window: never judged, which is harmless (unjudged never counts as
+        // useless), while moving the edge back would judge it against the wrong answer.
+        t.at = now_ms().max(last + 1);
         let injected: Vec<Injection> = self
             .db
             .injections_after(&t.session, last)
             .await?
             .into_iter()
-            .filter(|i| !i.memory_ids.is_empty())
+            .filter(|i| i.at <= t.at && !i.memory_ids.is_empty())
             .collect();
-        t.at = now_ms().max(last + 1);
         self.db.record_turn(&t).await?;
+        Ok((t, injected))
+    }
+
+    /// Judges what a closed turn had injected against its answer; returns how many injections.
+    pub async fn judge_turn(
+        &self,
+        t: &Turn,
+        injected: &[Injection],
+        answer: &str,
+    ) -> Result<usize, String> {
         let n = injected.len();
         if n > 0 && !answer.trim().is_empty() {
-            let evals = self.evaluate(&t, &injected, &answer).await;
+            let evals = self.evaluate(t, injected, answer).await;
             if !evals.is_empty() {
                 self.db.record_evals(&evals).await?;
             }
