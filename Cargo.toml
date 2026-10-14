@@ -1,0 +1,47 @@
+[package]
+name = "mnemo"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Long-term memory for agents, models and people: six-W memories over unique entities, searched in memory."
+license = "Apache-2.0"
+
+[dependencies]
+axum = "0.8.9"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "io-std", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+aho-corasick = "1"
+roaring = "0.10"
+unicode-normalization = "0.1"
+uuid = { version = "1", features = ["v4"] }
+futures = "0.3"
+async-trait = "0.1"
+sha2 = "0.10"
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }
+# Verifies the signature of published binaries (`mnemo update`); jsonwebtoken already depended on it.
+ed25519-dalek = "2.2"
+base64 = "0.22"
+# In-process embeddings: ONNX Runtime loaded at run time (the official library ships in the
+# image, verified by sha256) and the Hugging Face tokenizer.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "std"] }
+tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"] }
+
+[features]
+# Integration tests (`tests/`): they talk to a running mnemo server. Without the feature they are
+# not compiled, so a plain `cargo test` runs the unit tests plus the storage suite against the
+# ClickHouse at `MNEMO_TEST_CH_URL`.
+integration = []
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+[dev-dependencies]
+# The OIDC tests sign tokens with an ES256 key generated on the fly: no key lives in the repo.
+p256 = { version = "0.13", features = ["jwk", "pkcs8", "pem"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }

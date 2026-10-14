@@ -1,0 +1,6 @@
+target/
+.mnemo/
+dist/
+*.key
+*.pem
+.env

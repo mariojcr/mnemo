@@ -1,0 +1,11 @@
+{
+  "name": "mnemo",
+  "owner": { "name": "mnemo" },
+  "plugins": [
+    {
+      "name": "mnemo",
+      "source": "./plugin",
+      "description": "Long-term memory for Claude Code: recalls what earlier sessions learned and keeps every turn for the next one."
+    }
+  ]
+}

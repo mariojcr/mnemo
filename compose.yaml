@@ -1,0 +1,43 @@
+# Quick start: one mnemo server and its ClickHouse, on http://127.0.0.1:7700.
+#
+#   MNEMO_ADMIN_KEY=$(openssl rand -hex 24) docker compose up -d --build
+#
+# Distillation needs an OpenAI-compatible model (MNEMO_LLM_URL, MNEMO_EXTRACT_MODEL); without one,
+# mnemo still stores everything and finds it again by text. Change the ClickHouse password before
+# running this anywhere but your own machine.
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.9
+    environment:
+      CLICKHOUSE_USER: mnemo
+      CLICKHOUSE_PASSWORD: mnemo
+      CLICKHOUSE_DB: mnemo
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    volumes:
+      - clickhouse:/var/lib/clickhouse
+
+  mnemo:
+    build: .
+    image: mnemo:local
+    depends_on: [clickhouse]
+    ports:
+      - "127.0.0.1:7700:7700"
+    # Lets MNEMO_LLM_URL reach a model running on the host (e.g. Ollama), on Linux too.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      MNEMO_CH_URL: http://clickhouse:8123
+      MNEMO_CH_USER: mnemo
+      MNEMO_CH_PASSWORD: mnemo
+      MNEMO_ADMIN_KEY: ${MNEMO_ADMIN_KEY:?set MNEMO_ADMIN_KEY}
+      MNEMO_LLM_URL: ${MNEMO_LLM_URL:-}
+      MNEMO_LLM_KEY: ${MNEMO_LLM_KEY:-}
+      MNEMO_EXTRACT_MODEL: ${MNEMO_EXTRACT_MODEL:-}
+    volumes:
+      - mnemo:/data
+
+volumes:
+  clickhouse:
+  mnemo:

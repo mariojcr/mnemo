@@ -1,0 +1,12 @@
+#!/bin/sh
+# Launches mnemo for the plugin: the `mnemo` binary on the PATH. It never downloads anything by
+# itself: a binary fetched from the network and run on every turn, with no signature or checksum,
+# is exactly what nobody wants on their machine. It never breaks the Claude Code turn: if mnemo is
+# missing, it says so on stderr and exits 0.
+self=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+found=$(command -v mnemo 2>/dev/null || true)
+if [ -n "$found" ] && [ "$found" != "$self" ]; then
+  exec "$found" "$@"
+fi
+echo "mnemo: not found on the PATH; install it (see the README) and restart Claude Code" >&2
+exit 0

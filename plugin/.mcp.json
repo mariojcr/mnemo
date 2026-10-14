@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "mnemo": {
+      "type": "stdio",
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/mnemo",
+      "args": ["mcp"],
+      "env": {
+        "MNEMO_URL": "${MNEMO_URL:-}",
+        "MNEMO_KEY": "${MNEMO_KEY:-}"
+      }
+    }
+  }
+}

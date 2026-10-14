@@ -1,0 +1,39 @@
+{
+  "description": "Mnemo: repository context and conversation memory for Codex.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mnemo hook session-start --client codex",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mnemo hook prompt --client codex",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mnemo hook stop --client codex",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

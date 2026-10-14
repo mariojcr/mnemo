@@ -1,0 +1,14 @@
+<clickhouse>
+  <listen_host>0.0.0.0</listen_host>
+  <interserver_http_host from_env="CH_REPLICA"/>
+  <macros>
+    <shard>1</shard>
+    <replica from_env="CH_REPLICA"/>
+  </macros>
+  <zookeeper>
+    <node><host>mnemo-test-keeper</host><port>9181</port></node>
+  </zookeeper>
+  <default_replica_path>/clickhouse/tables/{uuid}/{shard}</default_replica_path>
+  <default_replica_name>{replica}</default_replica_name>
+  <background_pool_size>16</background_pool_size>
+</clickhouse>
