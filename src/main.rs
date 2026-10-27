@@ -602,6 +602,35 @@ mod bench {
         *seed
     }
 
+    /// Uniform in [-1, 1].
+    fn noise(seed: &mut u64) -> f32 {
+        (rng(seed) % 2001) as f32 / 1000.0 - 1.0
+    }
+
+    fn unit(v: Vec<f32>) -> Vec<f32> {
+        let n = v.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-9);
+        v.into_iter().map(|x| x / n).collect()
+    }
+
+    /// A vector near one of the topics: texts on one topic land around 0.6 of cosine with each
+    /// other and near 0 with the rest, so the 0.35 threshold lets a topic's share through.
+    fn near(topic: &[f32], seed: &mut u64) -> Vec<f32> {
+        let s = (0.67f32 * 3.0 / topic.len() as f32).sqrt();
+        unit(topic.iter().map(|x| x + s * noise(seed)).collect())
+    }
+
+    /// Peak resident memory of this process, from the kernel.
+    fn peak_rss_mb() -> u64 {
+        std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find(|l| l.starts_with("VmHWM:"))
+                    .and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok())
+            })
+            .map_or(0, |kb| kb / 1024)
+    }
+
     /// Zipf-like over a 20,000-word vocabulary, like real text.
     fn word(seed: &mut u64) -> String {
         let u = (rng(seed) % 1_000_000) as f64 / 1_000_000.0;
@@ -611,6 +640,10 @@ mod bench {
 
     pub fn run(n: usize) {
         let mut seed = 0x9E3779B97F4A7C15u64;
+        // 768 dimensions, like EmbeddingGemma; 200 topics.
+        let topics: Vec<Vec<f32>> = (0..200)
+            .map(|_| unit((0..768).map(|_| noise(&mut seed)).collect()))
+            .collect();
         let mut g = Globe::default();
         let t0 = Instant::now();
         let n_ent = 2000;
@@ -663,6 +696,7 @@ mod bench {
                     confidence: 0.8,
                     source_episodes: vec!["x".into()],
                     links,
+                    embedding: Some(near(&topics[(rng(&mut seed) % 200) as usize], &mut seed)),
                     ..Default::default()
                 },
                 false,
@@ -678,14 +712,17 @@ mod bench {
             .map(|s| s.to_string())
             .collect();
         let mut times = Vec::new();
+        let mut sem_times = Vec::new();
         let mut hits = 0usize;
-        for _ in 0..2000 {
+        for k in 0..4000 {
+            let semantic = k % 2 == 1;
             let q = format!(
                 "¿por qué falló el {} de svc{} con {}?",
                 word(&mut seed),
                 rng(&mut seed) % n_ent,
                 word(&mut seed)
             );
+            let qv = semantic.then(|| near(&topics[(rng(&mut seed) % 200) as usize], &mut seed));
             let t = Instant::now();
             let out = g.recall(&RecallOpts {
                 query: &q,
@@ -695,15 +732,22 @@ mod bench {
                 limit: 8,
                 w: None,
                 entities: &[],
-                query_vec: None,
+                query_vec: qv.as_deref(),
                 since: None,
                 until: None,
             });
-            times.push(t.elapsed().as_secs_f64() * 1000.0);
-            hits += out.hits.len();
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            if semantic {
+                sem_times.push(ms);
+            } else {
+                times.push(ms);
+                hits += out.hits.len();
+            }
         }
         times.sort_by(|a, b| a.total_cmp(b));
-        let p = |q: f64| times[((times.len() as f64 - 1.0) * q) as usize];
+        sem_times.sort_by(|a, b| a.total_cmp(b));
+        let pct = |t: &[f64], q: f64| t[((t.len() as f64 - 1.0) * q) as usize];
+        let p = |q: f64| pct(&times, q);
         let ti = Instant::now();
         g.upsert_entity(
             Entity {
@@ -770,12 +814,16 @@ mod bench {
             ));
         }
         println!(
-            "{{\"memories\": {n}, \"entities\": {n_ent}, \"build_s\": {:.2}, \"layout_ms\": {layout_ms:.0}, \"small_change_ms\": {incr_ms:.0}, \"p50_ms\": {:.2}, \"p95_ms\": {:.2}, \"p99_ms\": {:.2}, \"avg_hits\": {:.1}, \"galaxy\": {{{}}}}}",
+            "{{\"memories\": {n}, \"entities\": {n_ent}, \"build_s\": {:.2}, \"layout_ms\": {layout_ms:.0}, \"small_change_ms\": {incr_ms:.0}, \"p50_ms\": {:.2}, \"p95_ms\": {:.2}, \"p99_ms\": {:.2}, \"avg_hits\": {:.1}, \"semantic\": {{\"p50_ms\": {:.2}, \"p95_ms\": {:.2}, \"p99_ms\": {:.2}}}, \"peak_rss_mb\": {}, \"galaxy\": {{{}}}}}",
             build.as_secs_f64(),
             p(0.5),
             p(0.95),
             p(0.99),
             hits as f64 / 2000.0,
+            pct(&sem_times, 0.5),
+            pct(&sem_times, 0.95),
+            pct(&sem_times, 0.99),
+            peak_rss_mb(),
             tiles.join(", ")
         );
     }

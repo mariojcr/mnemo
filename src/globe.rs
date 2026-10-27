@@ -39,7 +39,7 @@ pub struct Globe {
     /// `expire` takes them out of `live`.
     expiring: BTreeSet<(i64, u32)>,
     text: Bm25,
-    vecs: HashMap<u32, Vec<i8>>,
+    vecs: Vecs,
     pub ent_rev: i64,
     pub mem_rev: i64,
     ent_seq: Vec<i64>,
@@ -82,6 +82,123 @@ pub struct RecallOut {
 const MAX_ENTITY_CANDIDATES: usize = 3000;
 const MAX_TEXT_CANDIDATES: usize = 500;
 
+/// Quantized vectors, one contiguous slab per dimension (two only while the model changes): a
+/// search reads memory in order instead of chasing one allocation per memory.
+#[derive(Default)]
+struct Vecs {
+    slabs: Vec<Slab>,
+}
+
+struct Slab {
+    dim: usize,
+    /// Row `i` is memory `i`'s vector; rows without one stay zero.
+    data: Vec<i8>,
+    has: RoaringBitmap,
+}
+
+impl Vecs {
+    fn insert(&mut self, i: u32, v: Vec<i8>) {
+        self.remove(i);
+        if v.is_empty() {
+            return;
+        }
+        let k = match self.slabs.iter().position(|s| s.dim == v.len()) {
+            Some(k) => k,
+            None => {
+                self.slabs.push(Slab {
+                    dim: v.len(),
+                    data: Vec::new(),
+                    has: RoaringBitmap::new(),
+                });
+                self.slabs.len() - 1
+            }
+        };
+        let s = &mut self.slabs[k];
+        let (start, end) = (i as usize * s.dim, (i as usize + 1) * s.dim);
+        if s.data.len() < end {
+            // Grows by an eighth, not double: at a million memories doubling leaves up to
+            // 768 MB reserved and unused.
+            if end > s.data.capacity() {
+                let more = (end - s.data.len()).max(s.data.capacity() / 8);
+                s.data.reserve_exact(more);
+            }
+            s.data.resize(end, 0);
+        }
+        s.data[start..end].copy_from_slice(&v);
+        s.has.insert(i);
+    }
+
+    fn remove(&mut self, i: u32) -> Option<Vec<i8>> {
+        let k = self.slabs.iter().position(|s| s.has.contains(i))?;
+        let s = &mut self.slabs[k];
+        s.has.remove(i);
+        let v = s.row(i).to_vec();
+        if s.has.is_empty() {
+            // The old model's last vector is gone: free its slab.
+            self.slabs.swap_remove(k);
+        }
+        Some(v)
+    }
+
+    fn contains(&self, i: u32) -> bool {
+        self.slabs.iter().any(|s| s.has.contains(i))
+    }
+
+    /// Cosine of `q` with each memory of `ids` that has a vector of its dimension, kept above
+    /// `min`. A vector of another model compares as nothing, as before.
+    fn scan(&self, q: &[i8], ids: &RoaringBitmap, min: f32) -> Vec<(u32, f32)> {
+        let mut out = Vec::new();
+        if let Some(s) = self.slabs.iter().find(|s| s.dim == q.len()) {
+            s.scan(q, &(ids & &s.has), min, &mut out);
+        }
+        out
+    }
+}
+
+impl Slab {
+    fn row(&self, i: u32) -> &[i8] {
+        &self.data[i as usize * self.dim..(i as usize + 1) * self.dim]
+    }
+
+    fn scan(&self, q: &[i8], ids: &RoaringBitmap, min: f32, out: &mut Vec<(u32, f32)>) {
+        #[cfg(target_arch = "x86_64")]
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: the CPU has AVX2, checked just above.
+            return unsafe { self.scan_avx2(q, ids, min, out) };
+        }
+        self.scan_any(q, ids, min, out)
+    }
+
+    /// The same loop, compiled for AVX2: the builds target baseline x86-64, and the dot
+    /// product takes half the time with the wider registers.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    fn scan_avx2(&self, q: &[i8], ids: &RoaringBitmap, min: f32, out: &mut Vec<(u32, f32)>) {
+        self.scan_any(q, ids, min, out)
+    }
+
+    #[inline(always)]
+    fn scan_any(&self, q: &[i8], ids: &RoaringBitmap, min: f32, out: &mut Vec<(u32, f32)>) {
+        for i in ids.iter() {
+            let c = cosine_q(q, self.row(i));
+            if c > min {
+                out.push((i, c));
+            }
+        }
+    }
+}
+
+/// The best `k` by score, ties by index: no full sort of everything above the threshold.
+fn top_k(mut v: Vec<(u32, f32)>, k: usize) -> Vec<(u32, f32)> {
+    let by = |a: &(u32, f32), b: &(u32, f32)| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0));
+    if v.len() > k {
+        v.select_nth_unstable_by(k, by);
+        v.truncate(k);
+    }
+    v.sort_by(by);
+    v
+}
+
 fn quantize(v: &[f32]) -> Vec<i8> {
     let n = v.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-9);
     v.iter()
@@ -89,6 +206,7 @@ fn quantize(v: &[f32]) -> Vec<i8> {
         .collect()
 }
 
+#[inline(always)]
 fn cosine_q(a: &[i8], b: &[i8]) -> f32 {
     if a.len() != b.len() {
         return 0.0;
@@ -193,7 +311,7 @@ impl Globe {
             // The stored memory has no embedding (it lives in `vecs`): keep it across the reindex.
             if let Some(m) = self.mems[i as usize].clone() {
                 let rev = self.mem_rev;
-                let keep = self.vecs.remove(&i);
+                let keep = self.vecs.remove(i);
                 self.upsert_memory(m, false, rev);
                 if let Some(v) = keep {
                     self.vecs.insert(i, v);
@@ -274,7 +392,7 @@ impl Globe {
             self.expiring.remove(&(end, idx));
         }
         self.text.remove(idx);
-        self.vecs.remove(&idx);
+        self.vecs.remove(idx);
         self.mem_links[idx as usize].clear();
     }
 
@@ -470,7 +588,7 @@ impl Globe {
     pub fn missing_vectors(&self, limit: usize) -> Vec<(String, String)> {
         self.live
             .iter()
-            .filter(|i| !self.vecs.contains_key(i))
+            .filter(|&i| !self.vecs.contains(i))
             .filter_map(|i| self.mems[i as usize].as_ref())
             .take(limit)
             .map(|m| (m.id.clone(), m.index_text()))
@@ -542,13 +660,7 @@ impl Globe {
     pub fn similar_vec(&self, v: &[f32], scope: &str, k: usize) -> Vec<(u32, f32)> {
         let q = quantize(v);
         let allowed = self.by_scope.get(scope).cloned().unwrap_or_default() & &self.live;
-        let mut best: Vec<(u32, f32)> = allowed
-            .iter()
-            .filter_map(|i| self.vecs.get(&i).map(|x| (i, cosine_q(&q, x))))
-            .collect();
-        best.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-        best.truncate(k);
-        best
+        top_k(self.vecs.scan(&q, &allowed, f32::NEG_INFINITY), k)
     }
 
     pub fn similar_text(&self, text: &str, scope: &str, k: usize) -> Vec<u32> {
@@ -716,15 +828,7 @@ impl Globe {
         let mut sem: HashMap<u32, f32> = HashMap::new();
         if let Some(qv) = o.query_vec {
             let q = quantize(qv);
-            let mut best: Vec<(u32, f32)> = self
-                .vecs
-                .iter()
-                .filter(|(i, _)| allowed.contains(**i))
-                .map(|(i, v)| (*i, cosine_q(&q, v)))
-                .filter(|(_, c)| *c > 0.35)
-                .collect();
-            best.sort_by(|a, b| b.1.total_cmp(&a.1));
-            for (i, c) in best.into_iter().take(40) {
+            for (i, c) in top_k(self.vecs.scan(&q, &allowed, 0.35), 40) {
                 sem.insert(i, c);
                 cand.insert(i);
             }
@@ -1362,6 +1466,38 @@ pub(crate) mod tests {
         assert_eq!(
             out.hits.first().map(|h| g.memory_at(h.idx).id.as_str()),
             Some("m9")
+        );
+    }
+
+    #[test]
+    fn vectors_live_in_one_slab_per_model() {
+        let mut v = Vecs::default();
+        v.insert(0, vec![127, 0]);
+        v.insert(5, vec![0, 127]);
+        v.insert(3, vec![127, 0, 0]);
+        assert_eq!(v.slabs.len(), 2, "a second model's vectors go apart");
+        assert!(v.contains(3) && !v.contains(4));
+        let all: RoaringBitmap = (0..8).collect();
+        let hits = v.scan(&[127, 0], &all, 0.5);
+        assert_eq!(
+            hits,
+            vec![(0, 1.0)],
+            "only its dimension, only above the threshold"
+        );
+        let only5: RoaringBitmap = [5].into_iter().collect();
+        assert!(v.scan(&[127, 0], &only5, -1.0).iter().all(|h| h.0 == 5));
+        v.insert(3, vec![0, 127]);
+        assert_eq!(
+            v.slabs.len(),
+            1,
+            "the old model's slab is freed with its last vector"
+        );
+        assert_eq!(v.remove(3), Some(vec![0, 127]));
+        assert_eq!(v.remove(3), None);
+        assert_eq!(
+            top_k(vec![(1, 0.5), (2, 0.9), (3, 0.5), (4, 0.7)], 3),
+            vec![(2, 0.9), (4, 0.7), (1, 0.5)],
+            "best first, ties by index"
         );
     }
 
