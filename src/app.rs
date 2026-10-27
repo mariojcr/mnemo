@@ -183,6 +183,20 @@ pub struct RememberOut {
     pub judge: String,
 }
 
+/// A thread row is keyed `{thread}|{scope}`, and a subject may itself hold a `|` (`auth0|123`):
+/// the known scope is cut off the end, not the last `|`.
+fn thread_parts(th: &Thread) -> (String, String) {
+    if !th.scope.is_empty()
+        && let Some(t) = th.thread.strip_suffix(&format!("|{}", th.scope))
+    {
+        return (t.to_string(), th.scope.clone());
+    }
+    th.thread
+        .rsplit_once('|')
+        .map(|(t, s)| (t.to_string(), s.to_string()))
+        .unwrap_or((th.thread.clone(), th.scope.clone()))
+}
+
 /// EmbeddingGemma's trained retrieval prompts: without them query-to-memory similarity is worse.
 pub fn embed_prefix(query: bool) -> &'static str {
     if query {
@@ -1342,11 +1356,7 @@ impl App {
         if self.cfg.extract_model.is_empty() {
             return Err("MNEMO_EXTRACT_MODEL is not set".into());
         }
-        let (thread_id, scope) = th
-            .thread
-            .rsplit_once('|')
-            .map(|(t, s)| (t.to_string(), s.to_string()))
-            .unwrap_or((th.thread.clone(), th.scope.clone()));
+        let (thread_id, scope) = thread_parts(th);
         let new = raw
             .thread_after(&thread_id, &scope, th.upto_ms, &th.upto_id, 60)
             .await?;
@@ -2034,6 +2044,34 @@ pub struct RecallArgs {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_subject_with_a_pipe_keeps_its_thread() {
+        use crate::storage::Thread;
+        let th = |thread: &str, scope: &str| Thread {
+            thread: thread.into(),
+            scope: scope.into(),
+            owner_id: String::new(),
+            reader_scopes: Vec::new(),
+            upto_ms: 0,
+            upto_id: String::new(),
+        };
+        let parts = |t: Thread| super::thread_parts(&t);
+        assert_eq!(
+            parts(th("s1|user:auth0|123", "user:auth0|123")),
+            ("s1".into(), "user:auth0|123".into())
+        );
+        assert_eq!(
+            parts(th("a|b|user:ana", "user:ana")),
+            ("a|b".into(), "user:ana".into()),
+            "a thread id with a pipe too"
+        );
+        assert_eq!(
+            parts(th("s1|user:ana", "")),
+            ("s1".into(), "user:ana".into()),
+            "a row without its scope still splits"
+        );
+    }
+
     #[tokio::test]
     async fn the_passes_of_one_thread_fly_at_once_and_settle_in_order() {
         use crate::app::{App, Cfg};
