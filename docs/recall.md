@@ -111,14 +111,23 @@ The text block cites each memory as `[m:<id>]`, so an agent can open the source 
 ## Benchmark scope
 
 `make bench N=1000000` measures the in-memory ranking path over a synthetic index. It creates
-2,000 entities and `N` memories, then runs 2,000 queries without query vectors. It reports build
-time, p50/p95/p99 recall latency and map timings as JSON.
+2,000 entities and `N` memories, each with a 768-dimension vector near one of 200 topics, then
+runs 2,000 queries without a query vector and 2,000 with one. It reports build time, p50/p95/p99
+recall latency for both (`semantic` for the second), the peak resident memory and map timings as
+JSON. The query embedding itself is not included: it is a model call, measured in
+[embeddings](embeddings.md).
 
-The roughly 8 ms p95 figure previously reported for one million memories describes this path;
-it excludes query embeddings, HTTP, raw-episode fallback and background distillation. The original
-measurement does not include a published hardware profile, so treat it as indicative rather than
-a reproducible cross-machine comparison. The 35–50 ms semantic-recall figure above includes query
-embedding and is a separate observation, not a percentile from this benchmark.
+On an i7-12700K (one core; warm; synthetic text), one million memories:
+
+| | p50 | p95 | peak RSS |
+|---|---|---|---|
+| without a query vector | 1.7 ms | 8.2 ms | 2.4 GB |
+| with a query vector | 37 ms | 44 ms | |
+
+The semantic figure is a full scan of the caller's vectors, in a contiguous slab, with AVX2 when
+the CPU has it. The 35–50 ms semantic-recall figure above includes query embedding and is a
+separate observation, not a percentile from this benchmark. All of these exclude HTTP, raw-episode
+fallback and background distillation.
 
 To publish a new result, include the output alongside the commit (`git rev-parse HEAD`), CPU model,
 RAM, OS/container limits, index size and whether the process was warm. For end-to-end latency,

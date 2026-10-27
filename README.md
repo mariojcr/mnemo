@@ -151,10 +151,11 @@ to serve. `forget` closes a memory; it does not erase its source episodes.
 ## Performance and limits
 
 Recall ranks memories in RAM without a generative LLM call. Semantic recall also computes a local
-query embedding. The synthetic in-memory benchmark has measured roughly **8 ms p95 over one
-million memories**; this excludes embeddings, HTTP and storage fallback. Typical semantic recall
-is documented at **35–50 ms including query embedding**, a different measurement rather than a
-latency guarantee. [Benchmark scope and reproduction](docs/recall.md#benchmark-scope).
+query embedding. Over one million synthetic memories the in-memory benchmark measures about
+**8 ms p95 by entities and words, and 44 ms p95 adding the vector scan**, on one desktop core; this
+excludes the query embedding, HTTP and storage fallback. Typical semantic recall is documented at
+**35–50 ms including query embedding**, a different measurement rather than a latency guarantee.
+[Benchmark scope and reproduction](docs/recall.md#benchmark-scope).
 
 mnemo is early software. Published builds currently target Linux x86_64, each server keeps its
 search index in RAM, and each database has one writer. Distillation quality depends on the model
