@@ -17,6 +17,16 @@ use std::time::{Duration, Instant};
 
 pub type Res<T> = Result<T, OpError>;
 
+/// A question needs no more: the rest would only cost tokenizing and alias matching under the
+/// globe lock (the embedder already reads no further).
+pub const MAX_QUERY_CHARS: usize = 2_000;
+/// A memory is a sentence or a short paragraph; distilled ones are far shorter.
+pub const MAX_FIELD_CHARS: usize = 4_000;
+/// Entities named per role in one memory.
+pub const MAX_NAMES: usize = 32;
+/// Records per `keep` call, like entities per upsert.
+pub const MAX_RECORDS: usize = 200;
+
 #[derive(Debug, PartialEq)]
 pub enum OpError {
     Bad(String),
@@ -91,6 +101,11 @@ pub fn is_internal_prompt(text: &str) -> bool {
 pub async fn recall(app: &App, p: &Principal, mut r: RecallInput) -> Res<Value> {
     let scopes = p.read_scopes(&r.scopes);
     let own = scopes.first().cloned().unwrap_or_default();
+    // A long prompt still gets its recall, from its beginning; the globe reads 32 ids at most.
+    if let Some((i, _)) = r.query.char_indices().nth(MAX_QUERY_CHARS) {
+        r.query.truncate(i);
+    }
+    r.entities.truncate(32);
     r.entities = r.entities.iter().map(|e| qualify(e, &own)).collect();
     if scopes.is_empty() {
         return Err(OpError::Forbidden(
@@ -411,6 +426,11 @@ pub async fn keep(
     items: Vec<KeepItem>,
     scope: Option<String>,
 ) -> Res<Value> {
+    if items.len() > MAX_RECORDS {
+        return Err(OpError::Bad(format!(
+            "at most {MAX_RECORDS} records per request"
+        )));
+    }
     let scope = scope
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| p.default_scope());
@@ -617,6 +637,20 @@ pub async fn remember(app: &App, p: &Principal, mut r: RememberReq) -> Res<Remem
         return Err(OpError::Forbidden(format!(
             "this key cannot write to {}",
             r.scope
+        )));
+    }
+    let long = |s: &str| s.chars().count() > MAX_FIELD_CHARS;
+    if long(&r.what) || r.why.as_deref().is_some_and(long) || r.how.as_deref().is_some_and(long) {
+        return Err(OpError::Bad(format!(
+            "what, why and how take at most {MAX_FIELD_CHARS} characters each"
+        )));
+    }
+    if [&r.who, &r.where_, &r.about]
+        .iter()
+        .any(|l| l.len() > MAX_NAMES)
+    {
+        return Err(OpError::Bad(format!(
+            "who, where and about take at most {MAX_NAMES} names each"
         )));
     }
     r.owner_id = p.owner(&r.owner_id);
@@ -1690,6 +1724,51 @@ mod tests {
         h.insert("x-forwarded-for", "garbage".parse().unwrap());
         assert_eq!(client_of(lo, &h, 1), "127.0.0.1");
         assert_eq!(client_of(lo, &HeaderMap::new(), 1), "127.0.0.1");
+        let v6 = |s: &str| client_of(s.parse().unwrap(), &HeaderMap::new(), 0);
+        assert_eq!(
+            v6("2001:db8:1:2:aaaa::1"),
+            v6("2001:db8:1:2:bbbb::2"),
+            "one /64 is one client"
+        );
+        assert_eq!(v6("2001:db8:1:2:aaaa::1"), "2001:db8:1:2::/64");
+        assert_ne!(v6("2001:db8:1:2::1"), v6("2001:db8:1:3::1"));
+        assert_eq!(v6("::ffff:203.0.113.5"), "203.0.113.5");
+    }
+
+    #[tokio::test]
+    async fn oversized_input_is_refused_or_trimmed() {
+        let a = app().await;
+        let ana = user("ana");
+        let req = |what: String, about: Vec<String>| RememberReq {
+            what,
+            about,
+            ..Default::default()
+        };
+        let long = "x".repeat(MAX_FIELD_CHARS + 1);
+        let r = remember(&a, &ana, req(long.clone(), vec![])).await;
+        assert!(matches!(r, Err(OpError::Bad(_))), "{r:?}");
+        let mut why = req("The cache is warm".into(), vec![]);
+        why.why = Some(long);
+        let r = remember(&a, &ana, why).await;
+        assert!(matches!(r, Err(OpError::Bad(_))), "{r:?}");
+        let names = (0..=MAX_NAMES).map(|i| format!("thing {i}")).collect();
+        let r = remember(&a, &ana, req("The cache is warm".into(), names)).await;
+        assert!(matches!(r, Err(OpError::Bad(_))), "{r:?}");
+        let items = (0..=MAX_RECORDS).map(|_| KeepItem::default()).collect();
+        let r = keep(&a, &ana, items, None).await;
+        assert!(matches!(r, Err(OpError::Bad(_))), "{r:?}");
+        // A pasted log as the prompt still gets its recall.
+        let r = recall(
+            &a,
+            &ana,
+            RecallInput {
+                query: "por qué ".repeat(20_000),
+                raw: Some("off".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(r.is_ok(), "{r:?}");
     }
 
     #[tokio::test]

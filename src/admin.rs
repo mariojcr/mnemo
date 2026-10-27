@@ -55,9 +55,25 @@ pub fn client_of(peer: IpAddr, headers: &HeaderMap, hops: usize) -> String {
             .and_then(|v| v.rsplit(',').nth(hops - 1))
             .and_then(|v| v.trim().parse::<IpAddr>().ok())
     {
-        return fwd.to_string();
+        return network_of(fwd);
     }
-    peer.to_string()
+    network_of(peer)
+}
+
+/// One IPv6 host usually holds a whole /64: counting each address apart would give it endless
+/// clients.
+fn network_of(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => v4.to_string(),
+            None => {
+                let s = v6.segments();
+                let net = std::net::Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0);
+                format!("{net}/64")
+            }
+        },
+        v4 => v4.to_string(),
+    }
 }
 
 pub async fn login(
@@ -208,9 +224,10 @@ pub async fn logout(State(app): State<Arc<App>>, headers: HeaderMap) -> Response
     let secure = app.oidc.as_ref().is_some_and(|o| o.secure_cookie());
     let value = oidc::cookie_for(&headers, SESSION_COOKIE, secure);
     if !value.is_empty() {
-        if let Ok(Some(s)) = app.db.session_by_hash(&crate::auth::hash(&value)).await {
-            let _ = app.db.revoke_session(&s.id).await;
-            // Only with a real session: an arbitrary caller must not flush everyone's caches.
+        if let Ok(Some(s)) = app.db.session_by_hash(&crate::auth::hash(&value)).await
+            // Only when a live session ends: an old cookie must not flush everyone's caches.
+            && let Ok(true) = app.db.revoke_session(&s.id).await
+        {
             app.forget_principals();
         }
     }
