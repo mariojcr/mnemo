@@ -7,7 +7,8 @@
 
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 use tokenizers::{Tokenizer, TruncationParams};
 
@@ -37,9 +38,54 @@ const MEDIA_DIM: usize = 512;
 /// Positions (rows × length) per call: memory grows with the square of the length, so a batch of
 /// long texts must not take the process down.
 const SLOTS: usize = 8192;
+/// Background batches run in groups this small (a few typical memories, ~0.2 s): a search that
+/// arrives meanwhile waits for one group, not for the whole batch.
+const BACKGROUND_SLOTS: usize = 256;
+/// How long background work lets searches go first before taking its next group anyway.
+const YIELD_AT_MOST: Duration = Duration::from_millis(250);
+
+/// A lock searches get ahead of background work in: between two of its groups, background work
+/// waits while a search is queued, for a while at most, so a stream of searches cannot stop it.
+struct Priority<T> {
+    inner: Mutex<T>,
+    queries: AtomicUsize,
+    /// Background work has waited its share: new searches let it go first (the mutex alone is
+    /// not fair, and a stream of searches would keep taking it back).
+    due: AtomicBool,
+}
+
+impl<T> Priority<T> {
+    fn new(t: T) -> Priority<T> {
+        Priority {
+            inner: Mutex::new(t),
+            queries: AtomicUsize::new(0),
+            due: AtomicBool::new(false),
+        }
+    }
+
+    fn lock(&self, query: bool) -> MutexGuard<'_, T> {
+        if query {
+            while self.due.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            self.queries.fetch_add(1, Ordering::SeqCst);
+            let g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+            self.queries.fetch_sub(1, Ordering::SeqCst);
+            return g;
+        }
+        let until = std::time::Instant::now() + YIELD_AT_MOST;
+        while self.queries.load(Ordering::SeqCst) > 0 && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.due.store(true, Ordering::SeqCst);
+        let g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        self.due.store(false, Ordering::SeqCst);
+        g
+    }
+}
 
 pub struct Onnx {
-    session: Mutex<ort::session::Session>,
+    session: Priority<ort::session::Session>,
     tok: Tokenizer,
     max_tokens: usize,
 }
@@ -78,14 +124,14 @@ impl Onnx {
             .commit_from_file(dir.join(FILES[0].0))
             .map_err(|e| format!("ONNX model: {e}"))?;
         Ok(Onnx {
-            session: Mutex::new(session),
+            session: Priority::new(session),
             tok,
             max_tokens: max_tokens.max(16),
         })
     }
 
-    /// Blocking: call it from `spawn_blocking`.
-    pub fn embed(&self, texts: &[String]) -> Result<(Vec<Vec<f32>>, u64), String> {
+    /// Blocking: call it from `spawn_blocking`. A search (`query`) goes ahead of background work.
+    pub fn embed(&self, texts: &[String], query: bool) -> Result<(Vec<Vec<f32>>, u64), String> {
         if texts.is_empty() {
             return Ok((Vec::new(), 0));
         }
@@ -102,16 +148,17 @@ impl Onnx {
         let ids: Vec<Vec<u32>> = enc.iter().map(|e| e.get_ids().to_vec()).collect();
         let tokens = ids.iter().map(|v| v.len() as u64).sum();
         let mut out: Vec<Vec<f32>> = vec![Vec::new(); texts.len()];
-        for group in groups(&ids, SLOTS) {
+        let slots = if query { SLOTS } else { BACKGROUND_SLOTS };
+        for group in groups(&ids, slots) {
             let batch: Vec<Vec<u32>> = group.iter().map(|&i| ids[i].clone()).collect();
-            for (i, v) in group.into_iter().zip(self.run(&batch)?) {
+            for (i, v) in group.into_iter().zip(self.run(&batch, query)?) {
                 out[i] = v;
             }
         }
         Ok((out, tokens))
     }
 
-    fn run(&self, batch: &[Vec<u32>]) -> Result<Vec<Vec<f32>>, String> {
+    fn run(&self, batch: &[Vec<u32>], query: bool) -> Result<Vec<Vec<f32>>, String> {
         let (ids, mask, len) = pad(batch);
         let rows = batch.len();
         let tensor = |v: Vec<i64>| ort::value::Tensor::from_array(([rows, len], v));
@@ -122,7 +169,7 @@ impl Onnx {
                 (Ok(a), Ok(b), Ok(c), Ok(d), Ok(e)) => (a, b, c, d, e),
                 _ => return Err("ONNX: could not prepare the inputs".into()),
             };
-        let mut s = self.session.lock().unwrap_or_else(|p| p.into_inner());
+        let mut s = self.session.lock(query);
         let out = s
             .run(ort::inputs![
                 "input_ids" => ids,
@@ -244,9 +291,12 @@ async fn mark_verified(path: &Path, sha: &str) {
 pub struct Local {
     model: OnceLock<Arc<Onnx>>,
     state: Mutex<String>,
-    /// One inference at a time; a caller timing out while waiting starts nothing, so abandoned
-    /// work does not pile up behind the model.
+    /// One background inference at a time; a caller timing out while waiting starts nothing, so
+    /// abandoned work does not pile up behind the model.
     turn: Arc<tokio::sync::Semaphore>,
+    /// Searches have their own turn: they wait for one background group at most, not for every
+    /// batch queued before them.
+    query_turn: Arc<tokio::sync::Semaphore>,
 }
 
 impl Local {
@@ -255,6 +305,7 @@ impl Local {
             model: OnceLock::new(),
             state: Mutex::new("loading the embedding model".into()),
             turn: Arc::new(tokio::sync::Semaphore::new(1)),
+            query_turn: Arc::new(tokio::sync::Semaphore::new(1)),
         });
         let m = me.clone();
         tokio::spawn(async move {
@@ -294,16 +345,19 @@ impl Local {
     }
 
     /// The permit travels with the inference: if the caller stops waiting, it stays held until the
-    /// inference ends, so no other one starts.
+    /// inference ends, so no other one starts. A search (`query`) takes its own turn and goes
+    /// ahead of background work.
     pub async fn embed(
         &self,
         texts: &[String],
         deadline: Duration,
+        query: bool,
     ) -> Result<Vec<Vec<f32>>, String> {
         let Some(m) = self.model.get().cloned() else {
             return Err(self.ready().err().unwrap_or_default());
         };
-        let permit = tokio::time::timeout(deadline, self.turn.clone().acquire_owned())
+        let turn = if query { &self.query_turn } else { &self.turn };
+        let permit = tokio::time::timeout(deadline, turn.clone().acquire_owned())
             .await
             .map_err(|_| "embeddings: the model is busy".to_string())?
             .map_err(|e| e.to_string())?;
@@ -312,7 +366,7 @@ impl Local {
         let started = std::time::Instant::now();
         let r = tokio::task::spawn_blocking(move || {
             let _turn = permit;
-            m.embed(&texts)
+            m.embed(&texts, query)
         })
         .await
         .map_err(|e| format!("embeddings: {e}"))
@@ -368,6 +422,46 @@ mod tests {
         let mut all: Vec<usize> = g.into_iter().flatten().collect();
         all.sort();
         assert_eq!(all, vec![0, 1, 2, 3, 4], "none is lost or repeated");
+    }
+
+    #[test]
+    fn a_search_goes_ahead_of_queued_background_work() {
+        let lock = Arc::new(Priority::new(()));
+        let bg = lock.clone();
+        let busy = std::thread::spawn(move || {
+            for _ in 0..40 {
+                let _g = bg.lock(false);
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+        std::thread::sleep(Duration::from_millis(30));
+        let t = std::time::Instant::now();
+        drop(lock.lock(true));
+        let waited = t.elapsed();
+        busy.join().unwrap();
+        // One group (20 ms), not the 800 ms of all of them; generous for a loaded machine.
+        assert!(waited < Duration::from_millis(400), "{waited:?}");
+    }
+
+    #[test]
+    fn background_work_still_advances_under_a_stream_of_searches() {
+        let lock = Arc::new(Priority::new(()));
+        let q = lock.clone();
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let s = stop.clone();
+        let searches = std::thread::spawn(move || {
+            while !s.load(Ordering::SeqCst) {
+                let _g = q.lock(true);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        std::thread::sleep(Duration::from_millis(20));
+        let t = std::time::Instant::now();
+        drop(lock.lock(false));
+        let waited = t.elapsed();
+        stop.store(true, Ordering::SeqCst);
+        searches.join().unwrap();
+        assert!(waited < YIELD_AT_MOST * 4, "{waited:?}");
     }
 
     #[test]
