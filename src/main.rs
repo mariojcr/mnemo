@@ -277,7 +277,7 @@ async fn build_app(
     app.writer = writer;
     app.oidc = oidc;
     app.info = info;
-    app.forwarded_hops = env_or("MNEMO_FORWARDED_HOPS", "1").parse().unwrap_or(1);
+    app.forwarded_hops = env_or("MNEMO_FORWARDED_HOPS", "0").parse().unwrap_or(0);
     let app = Arc::new(app);
     let n = app.refresh().await?;
     let (e, m) = app.globe.read().unwrap().counts();

@@ -108,7 +108,7 @@ the environment wins). Admin → Status shows the configuration; nothing is edit
 | `MNEMO_CH_WAIT_SECONDS` | 30 | how long to wait for ClickHouse at start |
 | `MNEMO_CH_REPLICATED` | off | `1` on a replicated ClickHouse: refuse to start unless the database already exists as `Replicated` (see [storage](storage.md#replicated-clickhouse)) |
 | `MNEMO_LISTEN` | `127.0.0.1:7700` (`0.0.0.0:7700` in the image) | address to serve on |
-| `MNEMO_FORWARDED_HOPS` | 1 | trusted reverse proxies in front, for the per-client login limit: the client is that many entries from the end of `X-Forwarded-For`; only read when the socket peer is loopback, private or link-local; `0` ignores the header |
+| `MNEMO_FORWARDED_HOPS` | 0 | trusted reverse proxies in front, for the per-client login limit: the client is that many entries from the end of `X-Forwarded-For`; only read when the socket peer is loopback, private or link-local; `0` ignores the header. Set it only behind a proxy that writes the header: without one, any client can make up the entry. IPv6 clients count per /64 |
 | `MNEMO_HOME` | `~/.mnemo` (`/data` in the image) | `config.env` and the token of `mnemo login` |
 | `MNEMO_WRITER_URL` | – | required by `mnemo api`: the writer to forward writes to |
 | `MNEMO_BASE_URL` | – | public URL: OIDC redirect (`/auth/callback`), default OAuth resource; with `https://` the cookies are `Secure` and `__Host-` prefixed |

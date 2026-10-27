@@ -81,6 +81,8 @@ pub struct RecallOut {
 /// Beyond these, search stops taking milliseconds and extra candidates only add noise.
 const MAX_ENTITY_CANDIDATES: usize = 3000;
 const MAX_TEXT_CANDIDATES: usize = 500;
+/// Entities a question's text can name; each one adds its family's postings to the candidates.
+const MAX_QUERY_ENTITIES: usize = 32;
 
 fn quantize(v: &[f32]) -> Vec<i8> {
     let n = v.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-9);
@@ -500,14 +502,18 @@ impl Globe {
         let scopes: HashSet<&str> = scopes.iter().map(|s| s.as_str()).collect();
         let t = norm(text);
         let mut out = Vec::new();
+        // Each alias is expanded once and each entity looked at once: anyone can give many of
+        // their entities the same alias, and repeat it all over a question.
+        let mut expanded = HashSet::new();
+        let mut seen = HashSet::new();
         for m in ac.find_iter(&t) {
             let before = t[..m.start()].chars().next_back();
             let after = t[m.end()..].chars().next();
-            if is_word_char(before) || is_word_char(after) {
+            if is_word_char(before) || is_word_char(after) || !expanded.insert(m.pattern()) {
                 continue;
             }
             for &e in &self.ac_targets[m.pattern().as_usize()] {
-                if self.visible_entity(e, &scopes) && !out.contains(&e) {
+                if seen.insert(e) && self.visible_entity(e, &scopes) {
                     out.push(e);
                 }
             }
@@ -653,6 +659,7 @@ impl Globe {
         let allowed = self.allowed(o.scopes);
 
         let mut qents = self.link_entities(o.query, o.scopes);
+        qents.truncate(MAX_QUERY_ENTITIES);
         // Client-supplied ids pass the same scope filter as the text, and are capped: a huge list
         // would be a way to guess ids.
         let sc: HashSet<&str> = o.scopes.iter().map(|s| s.as_str()).collect();
@@ -1187,6 +1194,31 @@ pub(crate) mod tests {
                 .is_empty(),
             "an entity from another scope is not visible"
         );
+    }
+
+    #[test]
+    fn a_question_repeating_a_crowded_alias_stays_cheap() {
+        let mut g = Globe::default();
+        for i in 0..3000 {
+            let id = format!("concept:c{i}");
+            g.upsert_entity(
+                ent(&id, "concept", &format!("c{i}"), &["dup"], None),
+                false,
+                1,
+            );
+        }
+        g.finish_batch();
+        let q = "dup ".repeat(500);
+        let t = std::time::Instant::now();
+        let found = g.link_entities(&q, &global());
+        assert_eq!(found.len(), 3000, "each entity once");
+        assert_eq!(
+            recall(&g, &q).entities.len(),
+            MAX_QUERY_ENTITIES,
+            "a question names a bounded number of entities"
+        );
+        // Quadratic, this took minutes.
+        assert!(t.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]

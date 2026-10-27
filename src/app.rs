@@ -207,7 +207,7 @@ impl App {
             llm,
             embedder,
             judge,
-            forwarded_hops: 1,
+            forwarded_hops: 0,
             writer: None,
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(600))
