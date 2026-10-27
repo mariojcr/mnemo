@@ -895,13 +895,19 @@ impl App {
             .iter()
             .map(|t| format!("{prefix}{}", t.chars().take(cap).collect::<String>()))
             .collect();
-        meter::tagged(meter::retag(kind), self.embed_untagged(&texts, timeout)).await
+        let query = kind == "embed_query";
+        meter::tagged(
+            meter::retag(kind),
+            self.embed_untagged(&texts, timeout, query),
+        )
+        .await
     }
 
     async fn embed_untagged(
         &self,
         texts: &[String],
         timeout: Duration,
+        query: bool,
     ) -> Res<Option<Vec<Vec<f32>>>> {
         let Some(gw) = self.embedder.as_ref() else {
             return Ok(None);
@@ -909,7 +915,7 @@ impl App {
         if self.cfg.embed_model.is_empty() || texts.is_empty() {
             return Ok(None);
         }
-        Ok(Some(gw.embed(texts, timeout).await?))
+        Ok(Some(gw.embed(texts, timeout, query).await?))
     }
 
     pub async fn backends_ready(&self) -> Res<()> {
@@ -1974,10 +1980,16 @@ pub enum Embedder {
 }
 
 impl Embedder {
-    pub async fn embed(&self, texts: &[String], timeout: Duration) -> Res<Vec<Vec<f32>>> {
+    /// `query`: a search, which goes ahead of background work.
+    pub async fn embed(
+        &self,
+        texts: &[String],
+        timeout: Duration,
+        query: bool,
+    ) -> Res<Vec<Vec<f32>>> {
         match self {
             Embedder::Local(o) => {
-                match tokio::time::timeout(timeout, o.embed(texts, timeout)).await {
+                match tokio::time::timeout(timeout, o.embed(texts, timeout, query)).await {
                     Ok(r) => r,
                     Err(_) => Err(format!("embeddings: more than {} s", timeout.as_secs())),
                 }

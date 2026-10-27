@@ -63,9 +63,9 @@ xychart-beta
 | Setting | Default | Why |
 |---|---|---|
 | `MNEMO_EMBED_MAX_TOKENS` | 2,048 (longer texts are truncated) | a native 8K text needs ~6 GB and 14 s; real memories are at most ~200 tokens (median 53) |
-| batch size | ≤ 8,192 positions per call | a huge query or many long texts cannot exhaust memory |
+| batch size | ≤ 8,192 positions per call; background work in groups of ≤ 256 | a huge query or many long texts cannot exhaust memory; a search waits for one small group, not a whole batch |
 | query length | 2,000 characters | a search never needs more |
-| concurrency | one inference at a time | waiting work is abandoned at its deadline, not queued |
+| concurrency | one inference at a time; searches have their own turn and go ahead of background work between its groups | waiting work is abandoned at its deadline, not queued; backfill and distillation do not push searches past their deadline |
 
 ## When the model changes
 
