@@ -1195,6 +1195,17 @@ impl Db for ClickHouse {
         .await
     }
 
+    /// The table keeps the highest value per name, so a lower one only sticks once the old rows
+    /// are gone.
+    async fn replace_cursor(&self, name: &str, value: i64) -> Res<()> {
+        self.delete(
+            "DELETE FROM cursors WHERE name = {n:String}",
+            &[("n", esc(name))],
+        )
+        .await?;
+        self.set_cursor(name, value).await
+    }
+
     async fn stats(&self) -> Res<Value> {
         let q = |sql: &'static str| async move {
             self.json(sql, &[])

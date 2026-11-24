@@ -531,6 +531,12 @@ async fn keys_and_cursors(db: &dyn Store) {
         7,
         "a cursor only moves forward"
     );
+    db.replace_cursor("c", 2).await.unwrap();
+    assert_eq!(
+        db.cursor("c").await.unwrap(),
+        2,
+        "a replaced cursor takes the new value, even a lower one"
+    );
     assert_eq!(db.cursor("other").await.unwrap(), 0);
 }
 

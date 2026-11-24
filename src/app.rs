@@ -1778,7 +1778,8 @@ impl App {
                 }
                 if let Some(todo) = redo.as_mut() {
                     if todo.is_empty() {
-                        if self.db.set_cursor(CURSOR, fingerprint).await.is_ok() {
+                        // A fingerprint, not a position: the new one may be lower than the old.
+                        if self.db.replace_cursor(CURSOR, fingerprint).await.is_ok() {
                             info!("vectors: recomputed with {}", self.cfg.embed_model);
                             redo = None;
                         }
@@ -2594,6 +2595,9 @@ mod tests {
             },
         ));
         app.refresh().await.unwrap();
+        // The old model's fingerprint is higher than the new one's: cursors only move forward, so
+        // recording the new one must replace it, or every vector is recomputed forever.
+        db.set_cursor("embed_model", i64::MAX).await.unwrap();
         let a2 = app.clone();
         let loop_task = tokio::spawn(async move { a2.backfill_embeddings().await });
         let want = super::model_fingerprint("new-model");

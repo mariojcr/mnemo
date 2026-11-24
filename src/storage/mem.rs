@@ -376,6 +376,11 @@ impl Db for Mem {
         Ok(())
     }
 
+    async fn replace_cursor(&self, name: &str, value: i64) -> Res<()> {
+        self.0.lock().unwrap().cursors.insert(name.into(), value);
+        Ok(())
+    }
+
     async fn stats(&self) -> Res<serde_json::Value> {
         let s = self.0.lock().unwrap();
         let mut ids: Vec<&str> = s.memories.iter().map(|(_, m, _)| m.id.as_str()).collect();
