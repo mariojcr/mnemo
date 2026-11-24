@@ -91,7 +91,7 @@ stateDiagram-v2
     Candidate --> Dropped: judge says not worth it (stays in the raw store)
     Candidate --> MergedIntoExisting: same as an existing memory (adds its episodes)
     Candidate --> Live: new
-    Candidate --> Live: updates or contradicts → closes the old one
+    Candidate --> Live: outdates the old one as a whole → closes it
     Live --> Closed: forget, or a newer memory supersedes it
     Live --> Closed: a state reaches valid_to
     Closed --> [*]

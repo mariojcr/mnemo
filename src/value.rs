@@ -139,7 +139,13 @@ impl App {
                 })
                 .collect()
         };
-        let question = injected.last().map(|i| i.query.clone()).unwrap_or_default();
+        // What the person asked, not what a tool call was searched with.
+        let question = injected
+            .iter()
+            .rev()
+            .find(|i| i.surface != "tool")
+            .map(|i| i.query.clone())
+            .unwrap_or_default();
         let answer: String = answer.chars().take(6000).collect();
         let tag = Tag {
             kind: "eval",

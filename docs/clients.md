@@ -53,6 +53,9 @@ sequenceDiagram
     H->>M: store the prompt as an episode + recall
     M-->>CC: relevant memories, added to the context
     CC->>CC: works (may call recall / remember / forget / keep)
+    CC->>H: PreToolUse, before each tool (0.6 s server deadline)
+    H->>M: recall with what the call is for
+    M-->>CC: at most one memory, if new to the session and a clear match
     CC-)H: Stop (async)
     H-)M: store the final answer as an episode + the turn's token usage
 ```
@@ -71,8 +74,28 @@ a warning (`systemMessage`, which the model does not read).
 
 The repo entity's id comes from `origin`'s `owner/repo` (else the folder name), so every clone is
 the same entity. `Stop` also posts the turn's token usage, read from the transcript, to `/v1/turns`.
-Hook recalls are lexical only (no embedding, no raw episodes), with a 1.5 s server deadline and a
-budget of 900 tokens. What the hooks leave out on purpose:
+Hook recalls use no raw episodes, with a 1.5 s server deadline and a budget of 900 tokens. The
+session start is lexical. A prompt is searched with the start of the previous answer added (600
+characters, read from the transcript; Claude Code only), because "do it" or "and this?" do not say
+what they are about, and also by meaning: only memories that match by meaning are injected. In a
+session-by-session simulation over 1,743 real turns, the 56 stored memories that a turn needed
+were delivered 12 times instead of 5, at 319 tokens per prompt instead of 230 (with the session
+budget at 8,000 tokens instead of 4,000).
+
+An agent most often needs what it knew in the middle of the work, not when the person writes: on
+56 needs from real sessions, the needed memory came in the top 3 for 3 when searching with the
+prompt and for 16 with the turn's tool calls. So before each tool call (Claude Code's
+`PreToolUse`), the hook searches with what the call is for: a command's description (never the
+command itself), a file path, a search pattern (only its path when the pattern looks like a key), a
+URL without its credentials, query or fragment, or a subagent's task. The server does not store
+these queries. It injects at most one
+memory, and only one the session has not seen, that matches by meaning and scores at least 7.08
+(the median best score of 20,431 searches made with real tool calls), with no entity cards. It
+counts against the same session budget. Calls that say nothing searchable, and subagents' calls,
+end before any network. In the simulation, the 56 needed memories were delivered 20 times instead
+of 12, at 464 tokens per turn instead of 319.
+
+What the hooks leave out on purpose:
 
 - The repo is where the session runs, not what it is about. Only the session start asks about it;
   a prompt episode carries the repo's name as `project_id` but is never linked to the repo entity,

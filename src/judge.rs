@@ -13,6 +13,10 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 pub const REL_MIN: f32 = 0.6;
+/// Probability that the existing memory is outdated AS A WHOLE (`updates` + `contradicts`) from which
+/// it is closed. Measured on 80 real closings with gold labels: with `partly` as an option and this
+/// sum, 20 of 30 true updates closed and 1 of 7 still-true memories (v0.2.0: 25 of 30 and 4 of 7).
+pub const CLOSE_MIN: f32 = 0.5;
 pub const WORTH_MIN: f32 = 0.45;
 /// Below this, the candidate is treated as a transient state.
 pub const DURABLE_MIN: f32 = 0.5;
@@ -21,9 +25,11 @@ pub const WHY_MIN: f32 = 0.4;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Relation {
     pub neighbor: String,
-    /// same | updates | contradicts | different
+    /// same | updates | partly | contradicts | different
     pub kind: String,
     pub p: f32,
+    /// Probability that the existing memory is outdated as a whole; closes it from [`CLOSE_MIN`].
+    pub close: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -47,14 +53,13 @@ pub enum Outcome {
 pub fn outcome(v: &Verdict, explicit: bool) -> Outcome {
     let mut supersede = Vec::new();
     for r in &v.relations {
-        if r.p < REL_MIN {
-            // Doubtful: merge nothing and close nothing; nobody reviews them by hand.
-            continue;
+        // Doubtful: merge nothing and close nothing; nobody reviews them by hand.
+        if r.kind == "same" && r.p >= REL_MIN {
+            return Outcome::Duplicate(r.neighbor.clone());
         }
-        match r.kind.as_str() {
-            "same" => return Outcome::Duplicate(r.neighbor.clone()),
-            "updates" | "contradicts" => supersede.push(r.neighbor.clone()),
-            _ => {}
+        // `partly` never closes: what is still true in the existing memory would be lost.
+        if r.close >= CLOSE_MIN {
+            supersede.push(r.neighbor.clone());
         }
     }
     if !explicit && v.worth < WORTH_MIN {
@@ -77,18 +82,22 @@ fn mem_json(m: &Memory) -> Value {
     })
 }
 
-const REL_CRITERIA: [(&str, &str); 4] = [
+const REL_CRITERIA: [(&str, &str); 5] = [
     (
         "same",
         "Both state the same fact, event, decision or preference; the candidate adds nothing that changes it",
     ),
     (
         "updates",
-        "Both are about the same thing and the candidate is newer or more precise, so the existing memory is outdated",
+        "Both are about the same single thing and the candidate is newer or more precise, so EVERYTHING the existing memory says is outdated",
+    ),
+    (
+        "partly",
+        "The candidate changes, rejects or completes only PART of what the existing memory says; other facts in the existing memory are still true",
     ),
     (
         "contradicts",
-        "The candidate says the existing memory is no longer true: the problem it describes was fixed, the plan was dropped, the value or setting changed, the thing was removed",
+        "The candidate says the existing memory as a whole is no longer true: the problem it describes was fixed, the plan was dropped, the value or setting changed, the thing was removed",
     ),
     (
         "different",
@@ -136,8 +145,11 @@ pub fn questions(
     (state, Value::Object(q))
 }
 
-/// Split by what each question needs: the service resends the whole state per question, and
-/// relations do not need the source while durable, worth and why_ok do not need the neighbours.
+/// Split by what each question needs: the service makes one call per question with the whole state
+/// (twice), so each relation goes alone with its own neighbour, without the source, and durable,
+/// worth and why_ok go without the neighbours. Measured on 5 real candidates with 8 neighbours each:
+/// 48 % fewer input tokens than all neighbours in one state, the same top answer in 36 of 40; the
+/// close rule was validated with one neighbour per question.
 pub fn decision_requests(
     cand: &Memory,
     neighbors: &[Memory],
@@ -151,12 +163,17 @@ pub fn decision_requests(
     let (rel, rest): (Map<String, Value>, Map<String, Value>) =
         q.into_iter().partition(|(k, _)| k.starts_with("rel_"));
     let mut out = Vec::new();
-    if !rel.is_empty() {
-        let mut st = state.clone();
-        if let Some(o) = st.as_object_mut() {
-            o.remove("source");
-        }
-        out.push((st, Value::Object(rel)));
+    for (k, question) in rel {
+        // `rel_n` is about neighbour n, whatever order the map keeps.
+        let n: usize = k["rel_".len()..].parse().unwrap_or(0);
+        let one = state["existing"]
+            .get(n.wrapping_sub(1))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let st = json!({"candidate": state["candidate"], "existing": [one]});
+        let mut q = Map::new();
+        q.insert(k, question);
+        out.push((st, Value::Object(q)));
     }
     if !rest.is_empty() {
         let mut st = state;
@@ -291,10 +308,19 @@ pub fn parse_answers(answers: &Value, neighbors: &[Memory]) -> Verdict {
             ),
             (None, None) => ("different".to_string(), 0.0),
         };
+        let close = match probs {
+            Some(pr) => ["updates", "contradicts"]
+                .iter()
+                .filter_map(|k| pr.get(*k).and_then(|v| v.as_f64()))
+                .sum::<f64>() as f32,
+            None if closing(&kind) => p,
+            None => 0.0,
+        };
         relations.push(Relation {
             neighbor: n.id.clone(),
             kind,
             p,
+            close,
         });
     }
     Verdict {
@@ -304,6 +330,10 @@ pub fn parse_answers(answers: &Value, neighbors: &[Memory]) -> Verdict {
         why_ok: noul(answers, "why_ok", 1.0),
         judge: "decisions",
     }
+}
+
+fn closing(kind: &str) -> bool {
+    matches!(kind, "updates" | "contradicts")
 }
 
 fn jaccard(a: &str, b: &str) -> f32 {
@@ -341,6 +371,7 @@ pub fn heuristic(cand: &Memory, neighbors: &[Memory]) -> Verdict {
                 neighbor: n.id.clone(),
                 kind: kind.into(),
                 p,
+                close: 0.0,
             }
         })
         .collect();
@@ -369,11 +400,13 @@ pub fn guard(mut v: Verdict, cand: &Memory, neighbors: &[Memory]) -> Verdict {
             && (cand.anchor_time() - n.anchor_time()).abs() > EVENT_SAME_MS
         {
             r.kind = "different".into();
+            r.close = 0.0;
             continue;
         }
         if !crate::facts::diff(&cand.what, &n.what).compatible() {
             r.kind = "updates".into();
             r.p = r.p.min(UNSURE);
+            r.close = 0.0;
         }
     }
     v
@@ -387,8 +420,8 @@ pub enum Judge {
 
 pub const LLM_JUDGE_PROMPT: &str = r#"You judge whether a CANDIDATE memory should be stored, given EXISTING memories about the same things and the SOURCE text it came from.
 Answer with JSON only, no prose:
-{"relations":[{"n":1,"relation":"same|updates|contradicts|different","confidence":0.0}],"durable":0.0,"worth":0.0,"why_supported":0.0}
-- relations: one entry per EXISTING memory, by its number n. same = states the same thing and adds nothing; updates = same subject but the candidate is newer or more precise, so the existing one is outdated; contradicts = the candidate says the existing one is no longer true; different = about something else even if it mentions the same things.
+{"relations":[{"n":1,"relation":"same|updates|partly|contradicts|different","confidence":0.0}],"durable":0.0,"worth":0.0,"why_supported":0.0}
+- relations: one entry per EXISTING memory, by its number n. same = states the same thing and adds nothing; updates = same single subject and the candidate is newer or more precise, so everything the existing one says is outdated; partly = the candidate changes or rejects only part of the existing one, the rest still holds; contradicts = the candidate says the existing one as a whole is no longer true; different = about something else even if it mentions the same things.
 - durable: probability the candidate is still true one month after it was recorded (low for outages in progress, failing deploys, temporary workarounds).
 - worth: probability it helps in a different future conversation (a durable fact, a decision and its reason, a cause, a preference, a procedure) rather than chit-chat or a one-off detail.
 - why_supported: probability the SOURCE supports the candidate's why field (1.0 if there is no why).
@@ -400,7 +433,7 @@ pub fn judge_schema() -> Value {
         "properties": {
             "relations": {"type": "array", "items": {"type": "object", "properties": {
                 "n": {"type": "integer"},
-                "relation": {"enum": ["same", "updates", "contradicts", "different"]},
+                "relation": {"enum": ["same", "updates", "partly", "contradicts", "different"]},
                 "confidence": {"type": "number"},
             }, "required": ["n", "relation", "confidence"]}},
             "durable": {"type": "number"},
@@ -444,10 +477,17 @@ pub fn parse_llm(text: &str, neighbors: &[Memory]) -> Option<Verdict> {
                 .and_then(|x| x.as_f64())
                 .map(|x| x as f32)
                 .unwrap_or(0.0);
+            // A model's stated confidence is not a probability: it keeps the old bar to close.
+            let close = if closing(kind) && p >= REL_MIN {
+                p
+            } else {
+                0.0
+            };
             Relation {
                 neighbor: n.id.clone(),
                 kind: kind.to_string(),
                 p,
+                close,
             }
         })
         .collect();
@@ -580,6 +620,7 @@ mod tests {
                     neighbor: n.to_string(),
                     kind: k.to_string(),
                     p: *p,
+                    close: if closing(k) { *p } else { 0.0 },
                 })
                 .collect(),
             durable: 1.0,
@@ -604,9 +645,14 @@ mod tests {
             Outcome::Supersede(vec!["b".into()])
         );
         assert_eq!(
-            outcome(&v(&[("a", "contradicts", 0.5)], 0.9), false),
+            outcome(&v(&[("a", "contradicts", 0.45)], 0.9), false),
             Outcome::Insert,
             "a doubtful relation closes nothing"
+        );
+        assert_eq!(
+            outcome(&v(&[("a", "partly", 0.9)], 0.9), false),
+            Outcome::Insert,
+            "a partial change keeps the existing memory"
         );
         assert_eq!(outcome(&v(&[], 0.2), false), Outcome::Drop);
         assert_eq!(
@@ -641,18 +687,17 @@ mod tests {
         let mut c = m("c", "The LB timeout is 600 s.");
         c.why = Some("So it never cuts first.".into());
         let reqs = decision_requests(&c, &[m("a", "x"), m("b", "y")], "source text", false);
-        assert_eq!(reqs.len(), 2);
-        let (rel_state, rel_q) = &reqs[0];
-        let (rest_state, rest_q) = &reqs[1];
-        assert!(
-            rel_q
-                .as_object()
-                .unwrap()
-                .keys()
-                .all(|k| k.starts_with("rel_"))
-        );
-        assert_eq!(rel_q.as_object().unwrap().len(), 2);
-        assert!(rel_state.get("source").is_none() && rel_state["existing"].is_array());
+        assert_eq!(reqs.len(), 3, "one per neighbour, then the rest");
+        for (i, (rel_state, rel_q)) in reqs[..2].iter().enumerate() {
+            let keys: Vec<&String> = rel_q.as_object().unwrap().keys().collect();
+            assert_eq!(keys, vec![&format!("rel_{}", i + 1)]);
+            assert!(rel_state.get("source").is_none());
+            let existing = rel_state["existing"].as_array().unwrap();
+            assert_eq!(existing.len(), 1, "only its own neighbour");
+            assert_eq!(existing[0]["n"], i + 1);
+            assert_eq!(existing[0]["what"], ["x", "y"][i]);
+        }
+        let (rest_state, rest_q) = &reqs[2];
         let rest_keys: Vec<&String> = rest_q.as_object().unwrap().keys().collect();
         assert!(rest_keys.iter().all(|k| !k.starts_with("rel_")) && rest_keys.len() == 3);
         assert!(rest_state.get("existing").is_none() && rest_state["source"] == "source text");
@@ -704,7 +749,8 @@ mod tests {
             Relation {
                 neighbor: "a".into(),
                 kind: "updates".into(),
-                p: 0.8
+                p: 0.8,
+                close: 0.85
             }
         );
         assert_eq!(v.relations[1].p, 0.0, "no answer means no certainty");
@@ -717,6 +763,32 @@ mod tests {
     }
 
     #[test]
+    fn what_closes_is_the_whole_memory_being_outdated_not_the_top_answer() {
+        let ns = [m("a", "x")];
+        let rel = |p: Value| {
+            parse_answers(
+                &json!({"rel_1": {"type": "choice", "probabilities": p}}),
+                &ns,
+            )
+        };
+        // Real answers from the audit. Gold "update": the top answer is partly, but most of the
+        // probability says the old memory is outdated as a whole.
+        let upd = rel(
+            json!({"same": 0.03, "updates": 0.05, "partly": 0.38, "contradicts": 0.51, "different": 0.03}),
+        );
+        assert_eq!(outcome(&upd, false), Outcome::Supersede(vec!["a".into()]));
+        // Gold "coexist": both still true.
+        let both = rel(
+            json!({"same": 0.04, "updates": 0.42, "partly": 0.5, "contradicts": 0.02, "different": 0.01}),
+        );
+        assert_eq!(outcome(&both, false), Outcome::Insert);
+        let same = rel(
+            json!({"same": 0.7, "updates": 0.2, "partly": 0.05, "contradicts": 0.0, "different": 0.05}),
+        );
+        assert_eq!(outcome(&same, false), Outcome::Duplicate("a".into()));
+    }
+
+    #[test]
     fn llm_verdicts_are_read_and_unknowns_are_doubtful() {
         let ns = [m("a", "x"), m("b", "y")];
         let v = parse_llm("Sure:\n{\"relations\":[{\"n\":2,\"relation\":\"updates\",\"confidence\":0.9},{\"n\":1,\"relation\":\"bogus\",\"confidence\":0.9}],\"durable\":0.3,\"worth\":1.7}", &ns).unwrap();
@@ -725,7 +797,8 @@ mod tests {
             Relation {
                 neighbor: "a".into(),
                 kind: "different".into(),
-                p: 0.9
+                p: 0.9,
+                close: 0.0
             },
             "an invented relation does not count"
         );
@@ -734,7 +807,8 @@ mod tests {
             Relation {
                 neighbor: "b".into(),
                 kind: "updates".into(),
-                p: 0.9
+                p: 0.9,
+                close: 0.9
             }
         );
         assert!((v.durable - 0.3).abs() < 1e-6 && v.worth == 1.0 && v.why_ok == 1.0);

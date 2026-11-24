@@ -68,8 +68,9 @@ or everyone's, as numbers only.
 | `daily` | injected and background tokens, judged and useful blocks, per day |
 | `memories` | the 25 most injected memories, how often each was used, and whether it is muted |
 
-The judge can dominate background tokens, because a decisions service evaluates every question
-against the whole state; that is why its requests are split and the source is cut to a passage
+The judge can dominate background tokens (about 80 % in two weeks of one person's use), because a
+decisions service evaluates every question against the whole state; that is why each relation goes
+in its own request with its own neighbour and the source is cut to a passage
 ([the judge](judge.md)). Embeddings run inside mnemo: metered, but no API spend. Measured on
 Claude Code sessions, injected memory was under 0.02 % of what those sessions read.
 
