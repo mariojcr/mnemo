@@ -3,7 +3,7 @@
 
 [package]
 name = "mnemo"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 publish = false
 description = "Long-term memory for agents, models and people: six-W memories over unique entities, searched in memory."
