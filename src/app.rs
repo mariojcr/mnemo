@@ -2110,7 +2110,10 @@ mod tests {
         use std::time::Duration;
         type Seen = Arc<M<Vec<(String, usize, usize)>>>;
         async fn embeddings(State(seen): State<Seen>, Json(b): Json<Value>) -> Json<Value> {
-            let input: Vec<String> = serde_json::from_value(b["input"].clone()).unwrap();
+            let input: Vec<&str> = b["input"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|t| t.as_str()).collect())
+                .unwrap_or_default();
             let longest = input.iter().map(|t| t.chars().count()).max().unwrap_or(0);
             seen.lock()
                 .unwrap()
