@@ -12,6 +12,31 @@ use serde_json::Value;
 /// Shorter queries find noise.
 const MIN_QUERY_CHARS: usize = 6;
 
+/// Scheme, host and path: a URL's credentials, query and fragment (keys, signed links) stay out.
+fn bare_url(url: &str) -> String {
+    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
+    let rest = rest.split(['?', '#']).next().unwrap_or("");
+    let rest = match rest.split_once('/') {
+        Some((auth, path)) => format!("{}/{path}", auth.rsplit('@').next().unwrap_or(auth)),
+        None => rest.rsplit('@').next().unwrap_or(rest).to_string(),
+    };
+    if scheme.is_empty() {
+        rest
+    } else {
+        format!("{scheme}://{rest}")
+    }
+}
+
+/// One long run of letters and digits, like a key, rather than words or a regular expression.
+fn key_like(s: &str) -> bool {
+    let s = s.trim();
+    s.len() >= 16
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+' | '/' | '='))
+        && s.chars().any(|c| c.is_ascii_digit())
+        && s.chars().any(|c| c.is_ascii_alphabetic())
+}
+
 /// What the call is about, or None when it says nothing a memory could answer.
 pub fn query(input: &Value) -> Option<String> {
     // Inside a subagent: it was briefed by the main conversation.
@@ -23,12 +48,14 @@ pub fn query(input: &Value) -> Option<String> {
     let q = match input["tool_name"].as_str().unwrap_or("") {
         "Bash" => f("description"),
         "Read" | "Edit" | "Write" | "NotebookEdit" | "MultiEdit" => f("file_path"),
+        // A pattern may be the token being looked for: then only where it is looked for.
+        "Grep" if key_like(&f("pattern")) => f("path"),
         "Grep" => format!("{} in {}", f("pattern"), f("path"))
             .trim()
             .to_string(),
         "Glob" => f("pattern"),
         "WebSearch" => f("query"),
-        "WebFetch" => f("url"),
+        "WebFetch" => bare_url(&f("url")),
         "Agent" | "Task" => f("description"),
         _ => String::new(),
     };
@@ -57,6 +84,16 @@ mod tests {
             q(json!({"tool_name": "Grep", "tool_input": {"pattern": "REL_MIN", "path": "src"}}))
                 .as_deref(),
             Some("REL_MIN in src")
+        );
+        assert_eq!(
+            q(json!({"tool_name": "Grep", "tool_input": {"pattern": "AKIA2EXAMPLE7KEY12345", "path": "/srv/app"}})).as_deref(),
+            Some("/srv/app"),
+            "a key-like pattern is not sent"
+        );
+        assert_eq!(
+            q(json!({"tool_name": "WebFetch", "tool_input": {"url": "https://user:pw@api.example.com/v1/items?api_key=sk_live_1#x"}})).as_deref(),
+            Some("https://api.example.com/v1/items"),
+            "no credentials, query or fragment"
         );
         for none in [
             json!({"tool_name": "TodoWrite", "tool_input": {"todos": []}}),

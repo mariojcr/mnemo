@@ -86,7 +86,9 @@ An agent most often needs what it knew in the middle of the work, not when the p
 56 needs from real sessions, the needed memory came in the top 3 for 3 when searching with the
 prompt and for 16 with the turn's tool calls. So before each tool call (Claude Code's
 `PreToolUse`), the hook searches with what the call is for: a command's description (never the
-command itself), a file path, a search pattern, a URL or a subagent's task. It injects at most one
+command itself), a file path, a search pattern (only its path when the pattern looks like a key), a
+URL without its credentials, query or fragment, or a subagent's task. The server does not store
+these queries. It injects at most one
 memory, and only one the session has not seen, that matches by meaning and scores at least 7.08
 (the median best score of 20,431 searches made with real tool calls), with no entity cards. It
 counts against the same session budget. Calls that say nothing searchable, and subagents' calls,

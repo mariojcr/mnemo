@@ -335,7 +335,12 @@ pub async fn recall(app: &App, p: &Principal, mut r: RecallInput) -> Res<Value> 
             surface: surface.clone(),
             subject: p.subject.clone(),
             session: session.clone().unwrap_or_default(),
-            query: r.query.chars().take(200).collect(),
+            // A tool call's query is what the tool was given (a URL, a pattern): not kept.
+            query: if tool {
+                String::new()
+            } else {
+                r.query.chars().take(200).collect()
+            },
             memory_ids: block.memory_ids,
             entity_ids: block.entity_ids,
             chars: block.text.chars().count() as u64,

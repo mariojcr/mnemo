@@ -10,7 +10,7 @@ providers receive content.
 
 | Operation | Data involved | Destination |
 |---|---|---|
-| Claude Code / Codex hooks | Prompts, final answers, session metadata and available token usage; repository identity at session start; before each tool call, what it is for (a command's description, a path, a pattern, a URL) as a search query | Your mnemo server |
+| Claude Code / Codex hooks | Prompts, final answers, session metadata and available token usage; repository identity at session start; before each tool call, what it is for (a command's description, a path, a pattern, a URL without its credentials, query or fragment) as a search query, not stored | Your mnemo server |
 | Storage | Raw episodes, memories, entities, revisions and usage records | Your ClickHouse deployment |
 | Embeddings | Memory text and search queries | ONNX Runtime inside the mnemo process, on the CPU |
 | Distillation and judging | Conversation passages, proposed memories and relevant existing memories | Your configured extraction / judge endpoints |
