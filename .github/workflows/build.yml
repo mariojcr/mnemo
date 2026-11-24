@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Every push and pull request runs the full suite (ClickHouse included). From main, the image goes
-# to ghcr.io as `main` and `sha-<7>`. A version tag on main (`v0.2.0`, or a pre-release such as
-# `v0.2.0-rc.1`) also pushes the image as `0.2.0` (and `latest` unless it is a pre-release) and
-# publishes a GitHub Release with the static client and its signed manifest, which `mnemo update`
-# installs.
+# to ghcr.io as `main` and `sha-<7>`. A version tag on main (`v0.3.0`, or a pre-release such as
+# `v0.3.0-rc.1`) also pushes the image under its version (`0.3.0`, and `latest` unless it is a
+# pre-release) and publishes a GitHub Release with the static client and its signed manifest,
+# which `mnemo update` installs.
 name: build
 
 on:
@@ -39,8 +39,18 @@ jobs:
           # the whole history: the tag check needs main, the build number counts its commits
           fetch-depth: 0
           persist-credentials: false
-      # The same grammar `mnemo update` accepts, and only commits that are on main: the build number
-      # is only meaningful there.
+      # The client reports the crate's version and Claude Code only updates the plugin when its
+      # version changes, so both say the same.
+      - name: Versions agree
+        run: |
+          set -euo pipefail
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          plugin=$(jq -r .version plugin/.claude-plugin/plugin.json)
+          [ "$plugin" = "$crate" ] \
+            || { echo "::error::plugin.json says $plugin, Cargo.toml says $crate"; exit 1; }
+      # The same grammar `mnemo update` accepts, only commits that are on main (the build number is
+      # only meaningful there), and the version those commits carry: `v0.3.0` and `v0.3.0-rc.1`
+      # need 0.3.0 in Cargo.toml.
       - name: Release tag
         id: tag
         if: startsWith(github.ref, 'refs/tags/')
@@ -51,7 +61,11 @@ jobs:
             || { echo "::error::not a release tag: $tag"; exit 1; }
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
             || { echo "::error::$tag is not on main"; exit 1; }
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          version=${tag#v}
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          [ "${version%%-*}" = "$crate" ] \
+            || { echo "::error::$tag needs ${version%%-*} in Cargo.toml, not $crate"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           if [[ $tag == *-* ]]; then pre=true; else pre=false; fi
           echo "prerelease=$pre" >> "$GITHUB_OUTPUT"
       - name: Format, lint and test

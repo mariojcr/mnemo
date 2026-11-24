@@ -45,17 +45,22 @@ docker run -p 7700:7700 \
 ## Releases
 
 `.github/workflows/build.yml` runs `make test`, ClickHouse included, on every push and pull request.
-From main it pushes the image to `ghcr.io/mariojcr/mnemo` as `main` and `sha-<7>`. To release, tag a
-commit on main and push the tag:
+From main it pushes the image to `ghcr.io/mariojcr/mnemo` as `main` and `sha-<7>`. To release, set
+the version in `Cargo.toml` (with `Cargo.lock`) and in `plugin/.claude-plugin/plugin.json` in a pull
+request, then tag the merged commit on main and push the tag:
 
 ```sh
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.3.0 && git push origin v0.3.0
 ```
 
-A version tag also pushes the image as `0.2.0` and `latest` (not for a pre-release such as
-`v0.2.0-rc.1`) and publishes a GitHub Release with the static client for Linux x86_64, its
-`checksums.txt` and the signed manifest that `mnemo update` installs. Every build carries its
-commit: `mnemo version` and `/v1/whoami` show it.
+`mnemo version` reports the crate's version, and Claude Code only updates the plugin when its
+version changes, so the workflow fails any build where the two disagree and any tag whose version,
+without its pre-release suffix, is not the crate's: `v0.3.0` and `v0.3.0-rc.1` both need 0.3.0.
+
+A version tag also pushes the image under its version, `0.3.0` and `latest` (a pre-release such as
+`v0.3.0-rc.1` only as `0.3.0-rc.1`), and publishes a GitHub Release with the static client for
+Linux x86_64, its `checksums.txt` and the signed manifest that `mnemo update` installs. Every build
+carries its commit: `mnemo version` and `/v1/whoami` show it.
 
 Add user-facing release notes explaining what changed, who benefits, how to install or upgrade,
 and any compatibility changes or known limitations. Link the binary, container tag and full
