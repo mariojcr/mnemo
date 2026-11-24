@@ -99,7 +99,8 @@ The automatic surfaces (`session_start`, `prompt`) leave out:
 | a saved copy of outside content (`keep`): a third party wrote that text | – |
 | a memory muted for this person ([cost and value](value.md)) | – |
 | everything, for a `<task-notification>` prompt: it is not a question | – |
-| everything, once the session's injections since its last reset reach `MNEMO_SESSION_BUDGET_TOKENS` (4,000) | `session` |
+| for a `prompt`, a memory found only by its words or names, when the meaning search ran: on 300 real prompts this doubled the share of useful injected memories (11 % → 21.5 %) with 26 % fewer tokens | `semantic` not `off` |
+| everything, once the session's injections since its last reset reach `MNEMO_SESSION_BUDGET_TOKENS` (8,000) | `session` |
 
 Each block is cut to `budget_tokens` (800, 50–20,000). A block sent with `persists: false`
 (rebuilt every turn) is neither remembered as seen nor counted against the session budget. An

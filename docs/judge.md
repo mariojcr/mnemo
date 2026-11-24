@@ -45,7 +45,7 @@ everything in one call.
 
 | Question | Type | Asks |
 |---|---|---|
-| `rel_n` | choice | same · updates · contradicts · different, against neighbour *n* |
+| `rel_n` | choice | same · updates · partly · contradicts · different, against neighbour *n* |
 | `durable` | yes/no | still true one month after it was recorded? |
 | `worth` | yes/no | would it help a different, future conversation? (not asked for an explicit `remember`) |
 | `why_ok` | yes/no | does the source support the `why`? (only when there is a why and a source) |
@@ -77,13 +77,19 @@ flowchart TB
     Q1 -- yes --> DUP["Duplicate: add the candidate's episodes<br/>to the existing memory"]
     Q1 -- no --> Q2{"worth < 0.45<br/>(and not explicit)?"}
     Q2 -- yes --> DROP["Drop: stays in the raw store only"]
-    Q2 -- no --> Q3{"relations 'updates' or<br/>'contradicts' with p ≥ 0.6?"}
+    Q2 -- no --> Q3{"p(updates) + p(contradicts)<br/>≥ 0.5 for a neighbour?"}
     Q3 -- yes --> SUP["Insert and close those memories"]
     Q3 -- no --> INS["Insert"]
     INS & SUP --> ADJ["why_ok < 0.4 → drop the why<br/>durable < 0.5 → a fact, preference or<br/>procedure becomes a state"]
 ```
 
-A relation below 0.6 merges and closes nothing: in doubt, both memories are kept. A state with no
+A relation below 0.6 merges nothing, and a neighbour closes only when the probability that it is
+outdated **as a whole** (`updates` plus `contradicts`) reaches 0.5. `partly`, a candidate that
+changes or completes only part of the neighbour, never closes it: the rest is still true. Measured
+on 80 real closings with gold labels (40 held out): v0.2.0, which had no `partly` and closed on
+the top answer at 0.6, closed 25 of 30 true updates and 4 of 7 memories that were still true; this
+rule closes 20 of 30 and 1 of 7. With the extraction model as judge, whose confidence is stated
+rather than measured, `updates` or `contradicts` still needs 0.6. In doubt, both memories are kept. A state with no
 known end is given one 7 days after it starts. The stored confidence is the `worth` probability
 with the decisions judge, otherwise 0.6 (0.9 for an explicit `remember`).
 

@@ -226,9 +226,9 @@ async fn build_app(
             .parse::<i64>()
             .unwrap_or(120)
             * 1000,
-        session_budget_tokens: env_or("MNEMO_SESSION_BUDGET_TOKENS", "4000")
+        session_budget_tokens: env_or("MNEMO_SESSION_BUDGET_TOKENS", "8000")
             .parse()
-            .unwrap_or(4000),
+            .unwrap_or(8000),
         mute_after: env_or("MNEMO_MUTE_AFTER", "6").parse().unwrap_or(6),
         eval_sample: env_or("MNEMO_EVAL_SAMPLE", "0.25")
             .parse::<f64>()

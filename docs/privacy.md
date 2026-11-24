@@ -10,7 +10,7 @@ providers receive content.
 
 | Operation | Data involved | Destination |
 |---|---|---|
-| Claude Code / Codex hooks | Prompts, final answers, session metadata and available token usage; repository identity at session start | Your mnemo server |
+| Claude Code / Codex hooks | Prompts, final answers, session metadata and available token usage; repository identity at session start; with `MNEMO_STEPS=1`, tool calls with the start of their output (masked) and the turn's intermediate messages | Your mnemo server |
 | Storage | Raw episodes, memories, entities, revisions and usage records | Your ClickHouse deployment |
 | Embeddings | Memory text and search queries | ONNX Runtime inside the mnemo process, on the CPU |
 | Distillation and judging | Conversation passages, proposed memories and relevant existing memories | Your configured extraction / judge endpoints |
@@ -18,7 +18,8 @@ providers receive content.
 | Recall | Selected memories and, when needed, source excerpts | The requesting client, which may pass them to its model provider |
 | OIDC sign-in | Identity claims and authentication exchanges | Your configured identity provider and mnemo server |
 
-The hooks read supported local transcript fields to report token usage. They do not upload the
+The hooks read supported local transcript fields to report token usage and, for a prompt's
+search, the start of the previous answer. They do not upload the
 entire transcript file as a file attachment. Web content is saved explicitly with `keep`; the
 client does not automatically capture every fetched page. See [clients](clients.md).
 

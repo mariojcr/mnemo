@@ -53,8 +53,10 @@ sequenceDiagram
     H->>M: store the prompt as an episode + recall
     M-->>CC: relevant memories, added to the context
     CC->>CC: works (may call recall / remember / forget / keep)
+    CC-)H: PostToolUse (async, with MNEMO_STEPS=1)
+    H-)M: store the tool call and the start of its output as an episode
     CC-)H: Stop (async)
-    H-)M: store the final answer as an episode + the turn's token usage
+    H-)M: store the final answer (and, with MNEMO_STEPS=1, the turn's other messages) + token usage
 ```
 
 The `mnemo` binary is installed apart from the plugin: the plugin's `bin/mnemo` only runs the one
@@ -71,8 +73,24 @@ a warning (`systemMessage`, which the model does not read).
 
 The repo entity's id comes from `origin`'s `owner/repo` (else the folder name), so every clone is
 the same entity. `Stop` also posts the turn's token usage, read from the transcript, to `/v1/turns`.
-Hook recalls are lexical only (no embedding, no raw episodes), with a 1.5 s server deadline and a
-budget of 900 tokens. What the hooks leave out on purpose:
+Hook recalls use no raw episodes, with a 1.5 s server deadline and a budget of 900 tokens. The
+session start is lexical. A prompt is searched with the start of the previous answer added (600
+characters, read from the transcript; Claude Code only), because "do it" or "and this?" do not say
+what they are about, and also by meaning: only memories that match by meaning are injected. In a
+session-by-session simulation over 1,743 real turns, the 56 stored memories that a turn needed
+were delivered 12 times instead of 5, at 319 tokens per prompt instead of 230 (with the session
+budget at 8,000 tokens instead of 4,000).
+
+With `MNEMO_STEPS=1` (in the environment or `~/.mnemo/config.env`), the Claude Code hooks also store the agent's
+steps: each tool call (what it was asked and the first 800 characters of its output, 2,500 for a
+subagent's report) and the turn's messages before the final answer. Edits store only the path;
+mnemo's own tools, to-do lists and subagents' inner calls are skipped. In an audit, 20 of 54 facts
+an agent needed and had never stored were in an earlier tool output or note. Private keys, values
+after names such as `password`, `token` or `Authorization`, and key-like strings are masked on your
+machine before anything is sent; ids, git commits, paths and addresses are kept. Steps add
+episodes to distill: about 8 million extraction tokens in two weeks of one person's use.
+
+What the hooks leave out on purpose:
 
 - The repo is where the session runs, not what it is about. Only the session start asks about it;
   a prompt episode carries the repo's name as `project_id` but is never linked to the repo entity,

@@ -137,7 +137,7 @@ the environment wins). Admin → Status shows the configuration; nothing is edit
 | `MNEMO_SETTLE_SECONDS` | 120 | a thread is distilled after this long quiet |
 | `MNEMO_EXTRACT_BUDGET_TOKENS` | 6000 | prompt tokens per extraction pass |
 | `MNEMO_DISTILL_PARALLEL` | 4 | passes of one thread in flight at once; up to 4 threads are distilled together, so the model sees up to 4× this many requests |
-| `MNEMO_SESSION_BUDGET_TOKENS` | 4000 | automatic injection per session; `0` = no limit |
+| `MNEMO_SESSION_BUDGET_TOKENS` | 8000 | automatic injection per session; `0` = no limit |
 | `MNEMO_MUTE_AFTER` | 6 | a memory judged this many times and never used is no longer injected automatically; `0` = never |
 | `MNEMO_EVAL_SAMPLE` | 0.25 | fraction of turns the LLM judges for use when there is no decisions service |
 | `MNEMO_PRICES` | – | `model=input,cache_read,cache_write,output;…` in dollars per million tokens, for the cost report |

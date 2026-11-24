@@ -209,7 +209,11 @@ pub async fn recall(app: &App, p: &Principal, mut r: RecallInput) -> Res<Value> 
             _ => Default::default(),
         };
     let mut out = out;
-    let (mut repeated, mut muted) = (0u64, 0u64);
+    let (mut repeated, mut muted, mut unmatched) = (0u64, 0u64, 0u64);
+    // A prompt's words alone (or a name in it) find too much: 11 % of what was injected helped.
+    // When the meaning search ran, only what also matches by meaning goes in (21.5 %, with 26 %
+    // fewer tokens, on 300 real prompts).
+    let by_meaning = surface == "prompt" && semantic;
     if auto {
         let g = app.globe.read().unwrap();
         let silent = app.muted.read().unwrap();
@@ -229,6 +233,9 @@ pub async fn recall(app: &App, p: &Principal, mut r: RecallInput) -> Res<Value> 
                 false
             } else if silent.contains(&(p.subject.clone(), id.clone())) {
                 muted += 1;
+                false
+            } else if by_meaning && !h.reasons.contains(&"semantic") {
+                unmatched += 1;
                 false
             } else {
                 true
@@ -335,7 +342,7 @@ pub async fn recall(app: &App, p: &Principal, mut r: RecallInput) -> Res<Value> 
     }
     info!(
         "{}",
-        json!({"kind": "recall", "subject": p.subject, "surface": surface, "took_ms": body["took_ms"], "fast_ms": fast_ms, "hits": out.hits.len(), "raw": raw_eps.len(), "w": out.w.as_str(), "semantic": semantic, "tokens": body["cost"]["tokens"], "repeated": repeated, "muted": muted})
+        json!({"kind": "recall", "subject": p.subject, "surface": surface, "took_ms": body["took_ms"], "fast_ms": fast_ms, "hits": out.hits.len(), "raw": raw_eps.len(), "w": out.w.as_str(), "semantic": semantic, "tokens": body["cost"]["tokens"], "repeated": repeated, "muted": muted, "unmatched": unmatched})
     );
     Ok(body)
 }
@@ -1094,6 +1101,81 @@ mod tests {
             semantic: Some("off".into()),
             ..Default::default()
         }
+    }
+
+    #[tokio::test]
+    async fn a_prompt_gets_only_what_matches_by_meaning_when_that_search_ran() {
+        use crate::globe::tests::mem;
+        use crate::storage::{Db, WritePlan};
+        let db = Arc::new(Mem::new());
+        let mut near = mem("near", (2026, 10, 1), "The backup runs at 03:00", None, &[]);
+        near.embedding = Some(vec![1.0, 0.0, 0.0]);
+        let mut far = mem(
+            "far",
+            (2026, 10, 2),
+            "The backup bucket was renamed",
+            None,
+            &[],
+        );
+        far.embedding = Some(vec![0.0, 1.0, 0.0]);
+        for m in [&mut near, &mut far] {
+            m.scope = "user:ana".into();
+        }
+        db.apply(
+            &WritePlan {
+                inserts: vec![near, far],
+                ..Default::default()
+            },
+            "fake-embed",
+            1,
+        )
+        .await
+        .unwrap();
+        let a = App::new(
+            db.clone() as Arc<dyn Db>,
+            Some(db as Arc<dyn RawStore>),
+            None,
+            Some(crate::app::Embedder::Fake(Some(vec![1.0, 0.0, 0.0]))),
+            Judge::Heuristic,
+            Cfg {
+                embed_model: "fake-embed".into(),
+                ..Default::default()
+            },
+        );
+        a.refresh().await.unwrap();
+        let ana = user("ana");
+        let ids = |v: &Value| -> Vec<String> {
+            v["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| m["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let mut q = auto("backup", "prompt", "s1");
+        q.semantic = Some("auto".into());
+        q.deadline_ms = Some(3000);
+        let out = recall(&a, &ana, q).await.unwrap();
+        assert_eq!(out["semantic"], true);
+        assert_eq!(ids(&out), vec!["near"], "a word in common is not enough");
+        let mut q = auto("backup", "", "s1");
+        q.semantic = Some("auto".into());
+        q.deadline_ms = Some(3000);
+        let mut both = ids(&recall(&a, &ana, q).await.unwrap());
+        both.sort();
+        assert_eq!(
+            both,
+            vec!["far", "near"],
+            "an explicit recall still finds both"
+        );
+        let off = recall(&a, &ana, auto("backup", "prompt", "s2"))
+            .await
+            .unwrap();
+        assert_eq!(
+            ids(&off).len(),
+            2,
+            "without the meaning search, words still count"
+        );
     }
 
     #[tokio::test]

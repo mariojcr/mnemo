@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 mod codex;
+mod steps;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum HookClient {
@@ -202,6 +203,51 @@ pub fn turn_usage(transcript: &str) -> TurnUsage {
     u
 }
 
+/// Characters of the previous answer added to the prompt's search.
+pub const PREVIOUS_CHARS: usize = 600;
+/// The previous answer is near the end: the person is waiting, a long transcript is not read whole.
+const TAIL_BYTES: u64 = 2 << 20;
+
+/// The last `max` bytes of a file, from the first whole line.
+fn read_tail(path: &Path, max: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    let start = len.saturating_sub(max);
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf);
+    Some(match (start > 0, text.find('\n')) {
+        (true, Some(i)) => text[i + 1..].to_string(),
+        _ => text.into_owned(),
+    })
+}
+
+/// The start of the assistant's last message in the main conversation (not a subagent's).
+pub fn previous_answer(transcript: &str) -> String {
+    for line in transcript.lines().rev() {
+        let Ok(d) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if d["type"] != "assistant" || d["isSidechain"] == true {
+            continue;
+        }
+        let text: String = d["message"]["content"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|p| p["type"] == "text")
+            .filter_map(|p| p["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !text.trim().is_empty() {
+            return text.trim().chars().take(PREVIOUS_CHARS).collect();
+        }
+    }
+    String::new()
+}
+
 async fn session_start(
     c: &Client,
     input: &Value,
@@ -265,7 +311,22 @@ async fn prompt(c: &Client, input: &Value, client: HookClient) -> Result<Option<
         c.post("/v1/episodes", &save_body).await?;
         return Ok(None);
     }
-    let recall_body = json!({"query": text, "budget_tokens": 900, "raw": "off", "semantic": "off", "deadline_ms": 1500,
+    // "Do it", "and this?": the prompt alone often does not say what it is about. The start of the
+    // previous answer does; the server then keeps only what matches by meaning.
+    let previous = match client {
+        HookClient::ClaudeCode => input["transcript_path"]
+            .as_str()
+            .and_then(|p| read_tail(Path::new(p), TAIL_BYTES))
+            .map(|t| previous_answer(&t))
+            .unwrap_or_default(),
+        HookClient::Codex => String::new(),
+    };
+    let query = if previous.is_empty() {
+        text.to_string()
+    } else {
+        format!("{text}\n\n{previous}")
+    };
+    let recall_body = json!({"query": query, "budget_tokens": 900, "limit": 30, "raw": "off", "semantic": "auto", "deadline_ms": 1500,
         "surface": "prompt", "session": session, "thread": client.thread(input)});
     let save = c.post("/v1/episodes", &save_body);
     let recall = c.post("/v1/recall", &recall_body);
@@ -285,13 +346,25 @@ async fn stop(c: &Client, input: &Value, client: HookClient) -> Result<Option<St
     }
     let session = client.session(input);
     let thread = client.thread(input);
-    let ep = json!({"episode_id": format!("{thread}:{}:a", now_ms()), "thread": thread, "source": "chat", "role": "assistant", "agent": client.source(),
-        "occurred_at": now_ms(), "text": text});
-    c.post("/v1/episodes", &json!({"episodes": [ep]})).await?;
     let transcript = input["transcript_path"]
         .as_str()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .unwrap_or_default();
+    let at = now_ms();
+    let mut eps = Vec::new();
+    if client == HookClient::ClaudeCode && steps::enabled() {
+        // The turn's other messages happened before its answer: keep them in that order.
+        let notes = steps::notes(&transcript, text);
+        let n = notes.len() as i64;
+        for (i, note) in notes.into_iter().enumerate() {
+            let t = at - n + i as i64;
+            eps.push(json!({"episode_id": format!("{thread}:{t}:n{i}"), "thread": thread, "source": "chat", "role": "tool",
+                "agent": client.source(), "occurred_at": t, "text": note}));
+        }
+    }
+    eps.push(json!({"episode_id": format!("{thread}:{at}:a"), "thread": thread, "source": "chat", "role": "assistant", "agent": client.source(),
+        "occurred_at": at, "text": text}));
+    c.post("/v1/episodes", &json!({"episodes": eps})).await?;
     let usage = match client {
         HookClient::ClaudeCode => turn_usage(&transcript),
         HookClient::Codex => match codex::turn_usage(&transcript, input) {
@@ -307,6 +380,26 @@ async fn stop(c: &Client, input: &Value, client: HookClient) -> Result<Option<St
     };
     c.post("/v1/turns", &json!({"session": session, "source": client.source(), "model": usage.model, "input_tokens": usage.input,
         "cache_read_tokens": usage.cache_read, "cache_creation_tokens": usage.cache_creation, "output_tokens": usage.output, "calls": usage.calls, "answer": text})).await?;
+    Ok(None)
+}
+
+/// One PostToolUse: the call and the start of its output, masked (see `steps`).
+async fn tool(c: &Client, input: &Value, client: HookClient) -> Result<Option<String>, String> {
+    let Some(text) = steps::step(input) else {
+        return Ok(None);
+    };
+    let thread = client.thread(input);
+    let at = now_ms();
+    let call = input["tool_use_id"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+    let cwd = PathBuf::from(input["cwd"].as_str().unwrap_or("."));
+    let ep = json!({"episode_id": format!("{thread}:{at}:t:{call}"), "thread": thread, "source": "chat", "role": "tool",
+        "agent": client.source(), "occurred_at": at, "text": text,
+        "project_id": repo_of(&cwd).map(|r| r.1).unwrap_or_default()});
+    c.post("/v1/episodes", &json!({"episodes": [ep]})).await?;
     Ok(None)
 }
 
@@ -327,9 +420,13 @@ pub async fn run(args: &[String]) {
         return;
     }
     let input: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
+    // Every tool call runs this hook: without steps on, it ends before any network.
+    if event == "tool" && (client != HookClient::ClaudeCode || !steps::enabled()) {
+        return;
+    }
     // Synchronous hooks get a short deadline: the user is waiting. Codex runs `stop`
     // synchronously too, so it is not lost when `codex exec` exits.
-    let timeout = if event == "stop" && client == HookClient::ClaudeCode {
+    let timeout = if matches!(event.as_str(), "stop" | "tool") && client == HookClient::ClaudeCode {
         Duration::from_secs(20)
     } else {
         Duration::from_secs(3)
@@ -349,6 +446,7 @@ pub async fn run(args: &[String]) {
         "session-start" => session_start(&c, &input, client).await,
         "prompt" => prompt(&c, &input, client).await,
         "stop" => stop(&c, &input, client).await,
+        "tool" => tool(&c, &input, client).await,
         other => Err(format!("unknown event: {other}")),
     };
     match res {
@@ -503,6 +601,34 @@ mod tests {
         }
         server.abort();
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_prompt_search_carries_the_start_of_the_previous_answer() {
+        let lines = [
+            json!({"type": "user", "message": {"content": "deploy it"}}),
+            json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "The gateway runs on Thor. "}, {"type": "text", "text": "x".repeat(900)}]}}),
+            json!({"type": "assistant", "isSidechain": true, "message": {"content": [{"type": "text", "text": "subagent"}]}}),
+            json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t"}]}}),
+        ]
+        .iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+        let p = previous_answer(&lines);
+        assert!(p.starts_with("The gateway runs on Thor."));
+        assert_eq!(p.chars().count(), PREVIOUS_CHARS);
+        assert_eq!(previous_answer("not json"), "");
+        let dir =
+            std::env::temp_dir().join(format!("mnemo-tail-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::write(&dir, format!("{}\nlast line", "a".repeat(100))).unwrap();
+        assert_eq!(
+            read_tail(&dir, 15).unwrap(),
+            "last line",
+            "starts at a whole line"
+        );
+        assert_eq!(read_tail(&dir, 1000).unwrap().len(), 110);
+        std::fs::remove_file(dir).ok();
     }
 
     #[test]
