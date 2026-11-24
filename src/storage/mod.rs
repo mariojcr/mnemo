@@ -180,7 +180,11 @@ pub trait Db: Send + Sync {
         lease_ms: i64,
     ) -> Res<Vec<Thread>>;
     async fn cursor(&self, name: &str) -> Res<i64>;
+    /// Only moves forward: a lower value than the stored one is ignored.
     async fn set_cursor(&self, name: &str, value: i64) -> Res<()>;
+    /// Sets the value exactly, lower or higher: for a cursor that names something (the embedding
+    /// model's fingerprint) rather than a position.
+    async fn replace_cursor(&self, name: &str, value: i64) -> Res<()>;
     async fn stats(&self) -> Res<serde_json::Value>;
     async fn create_key(&self, k: &KeyRow) -> Res<()>;
     async fn key_by_hash(&self, hash: &str) -> Res<Option<KeyRow>>;
