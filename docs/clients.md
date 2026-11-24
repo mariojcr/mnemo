@@ -53,10 +53,11 @@ sequenceDiagram
     H->>M: store the prompt as an episode + recall
     M-->>CC: relevant memories, added to the context
     CC->>CC: works (may call recall / remember / forget / keep)
-    CC-)H: PostToolUse (async, with MNEMO_STEPS=1)
-    H-)M: store the tool call and the start of its output as an episode
+    CC->>H: PreToolUse, before each tool (0.6 s server deadline)
+    H->>M: recall with what the call is for
+    M-->>CC: at most one memory, if new to the session and a clear match
     CC-)H: Stop (async)
-    H-)M: store the final answer (and, with MNEMO_STEPS=1, the turn's other messages) + token usage
+    H-)M: store the final answer as an episode + the turn's token usage
 ```
 
 The `mnemo` binary is installed apart from the plugin: the plugin's `bin/mnemo` only runs the one
@@ -81,14 +82,16 @@ session-by-session simulation over 1,743 real turns, the 56 stored memories that
 were delivered 12 times instead of 5, at 319 tokens per prompt instead of 230 (with the session
 budget at 8,000 tokens instead of 4,000).
 
-With `MNEMO_STEPS=1` (in the environment or `~/.mnemo/config.env`), the Claude Code hooks also store the agent's
-steps: each tool call (what it was asked and the first 800 characters of its output, 2,500 for a
-subagent's report) and the turn's messages before the final answer. Edits store only the path;
-mnemo's own tools, to-do lists and subagents' inner calls are skipped. In an audit, 20 of 54 facts
-an agent needed and had never stored were in an earlier tool output or note. Private keys, values
-after names such as `password`, `token` or `Authorization`, and key-like strings are masked on your
-machine before anything is sent; ids, git commits, paths and addresses are kept. Steps add
-episodes to distill: about 8 million extraction tokens in two weeks of one person's use.
+An agent most often needs what it knew in the middle of the work, not when the person writes: on
+56 needs from real sessions, the needed memory came in the top 3 for 3 when searching with the
+prompt and for 16 with the turn's tool calls. So before each tool call (Claude Code's
+`PreToolUse`), the hook searches with what the call is for: a command's description (never the
+command itself), a file path, a search pattern, a URL or a subagent's task. It injects at most one
+memory, and only one the session has not seen, that matches by meaning and scores at least 7.08
+(the median best score of 20,431 searches made with real tool calls), with no entity cards. It
+counts against the same session budget. Calls that say nothing searchable, and subagents' calls,
+end before any network. In the simulation, the 56 needed memories were delivered 20 times instead
+of 12, at 464 tokens per turn instead of 319.
 
 What the hooks leave out on purpose:
 

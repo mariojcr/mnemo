@@ -20,6 +20,10 @@ pub type Res<T> = Result<T, OpError>;
 /// A question needs no more: the rest would only cost tokenizing and alias matching under the
 /// globe lock (the embedder already reads no further).
 pub const MAX_QUERY_CHARS: usize = 2_000;
+/// The median best score of 20,431 searches made with real tool calls. Requiring it delivered 20 of
+/// 56 needed memories instead of 18, with 464 tokens per turn instead of 536: weak matches filled
+/// the session's budget.
+pub const TOOL_MIN_SCORE: f32 = 7.08;
 /// A memory is a sentence or a short paragraph; distilled ones are far shorter.
 pub const MAX_FIELD_CHARS: usize = 4_000;
 /// Entities named per role in one memory.
@@ -50,7 +54,7 @@ impl std::fmt::Display for OpError {
 #[derive(Deserialize, Default, Clone, Debug)]
 pub struct RecallInput {
     pub query: String,
-    /// session_start | prompt | mcp. Without it (the UI, a plain API query) the
+    /// session_start | prompt | tool | mcp. Without it (the UI, a plain API query) the
     /// injection is not recorded.
     #[serde(default)]
     pub surface: Option<String>,
@@ -180,7 +184,8 @@ pub async fn recall(app: &App, p: &Principal, mut r: RecallInput) -> Res<Value> 
         }
     }
     // Automatic surfaces do not pay twice for what is already in front of the model.
-    let auto = matches!(surface.as_str(), "session_start" | "prompt");
+    let auto = matches!(surface.as_str(), "session_start" | "prompt" | "tool");
+    let tool = surface == "tool";
     let session = r
         .session
         .as_deref()
@@ -213,7 +218,7 @@ pub async fn recall(app: &App, p: &Principal, mut r: RecallInput) -> Res<Value> 
     // A prompt's words alone (or a name in it) find too much: 11 % of what was injected helped.
     // When the meaning search ran, only what also matches by meaning goes in (21.5 %, with 26 %
     // fewer tokens, on 300 real prompts).
-    let by_meaning = surface == "prompt" && semantic;
+    let by_meaning = (surface == "prompt" || tool) && semantic;
     if auto {
         let g = app.globe.read().unwrap();
         let silent = app.muted.read().unwrap();
@@ -244,6 +249,14 @@ pub async fn recall(app: &App, p: &Principal, mut r: RecallInput) -> Res<Value> 
         out.entities
             .retain(|&e| !window.entity_ids.contains(&g.entity_at(e).id));
     }
+    if tool {
+        // Before every tool call: one memory, only a clear match, no entity cards. On 1,743 real
+        // turns this took the stored memories delivered when needed from 12 to 20 of 56, for 145
+        // more tokens per turn.
+        out.hits.retain(|h| h.score >= TOOL_MIN_SCORE);
+        out.hits.truncate(1);
+        out.entities.clear();
+    }
     let mut budget_tokens = r.budget_tokens.unwrap_or(800).clamp(50, 20_000) as u64;
     let mut skipped = if internal { "internal" } else { "" };
     if skipped.is_empty() && auto && persists && app.cfg.session_budget_tokens > 0 {
@@ -269,7 +282,7 @@ pub async fn recall(app: &App, p: &Principal, mut r: RecallInput) -> Res<Value> 
         }
         ids
     };
-    let (things_text, things_json) = if !skipped.is_empty() {
+    let (things_text, things_json) = if !skipped.is_empty() || tool {
         (String::new(), Vec::new())
     } else {
         things_of(app, &scopes, &thing_ids).await
@@ -1175,6 +1188,98 @@ mod tests {
             ids(&off).len(),
             2,
             "without the meaning search, words still count"
+        );
+    }
+
+    #[tokio::test]
+    async fn before_a_tool_only_the_best_clear_match_goes_in() {
+        use crate::globe::tests::{ent, mem};
+        use crate::model::Role;
+        use crate::storage::{Db, WritePlan};
+        let db = Arc::new(Mem::new());
+        let mut gw = ent("system:gateway@user:ana", "system", "gateway", &[], None);
+        gw.scope = "user:ana".into();
+        db.upsert_entities(&[gw], 1).await.unwrap();
+        let mut ms = Vec::new();
+        for (id, what) in [
+            ("a", "The gateway health check is GET /healthz on port 8100"),
+            ("b", "The gateway health check runs every 30 seconds"),
+        ] {
+            let mut m = mem(
+                id,
+                (2026, 10, 1),
+                what,
+                None,
+                &[("system:gateway@user:ana", Role::About)],
+            );
+            m.embedding = Some(vec![1.0, 0.0, 0.0]);
+            m.scope = "user:ana".into();
+            ms.push(m);
+        }
+        db.apply(
+            &WritePlan {
+                inserts: ms,
+                ..Default::default()
+            },
+            "fake-embed",
+            1,
+        )
+        .await
+        .unwrap();
+        let a = App::new(
+            db.clone() as Arc<dyn Db>,
+            Some(db as Arc<dyn RawStore>),
+            None,
+            Some(crate::app::Embedder::Fake(Some(vec![1.0, 0.0, 0.0]))),
+            Judge::Heuristic,
+            Cfg {
+                embed_model: "fake-embed".into(),
+                ..Default::default()
+            },
+        );
+        a.refresh().await.unwrap();
+        let ana = user("ana");
+        let mut q = auto("Check the gateway health check", "tool", "s1");
+        q.semantic = Some("auto".into());
+        q.deadline_ms = Some(3000);
+        let explicit = {
+            let mut e = auto("Check the gateway health check", "", "s1");
+            e.semantic = Some("auto".into());
+            e.deadline_ms = Some(3000);
+            recall(&a, &ana, e).await.unwrap()
+        };
+        let best = explicit["items"][0]["score"].as_f64().unwrap() as f32;
+        let out = recall(&a, &ana, q).await.unwrap();
+        assert!(
+            best >= TOOL_MIN_SCORE,
+            "the setup must be a clear match: {best}"
+        );
+        assert_eq!(
+            out["items"].as_array().unwrap().len(),
+            1,
+            "one memory at most"
+        );
+        assert!(
+            !out["text"]
+                .as_str()
+                .unwrap()
+                .contains("Things and their records")
+        );
+        let mut again = auto("Check the gateway health check", "tool", "s1");
+        again.semantic = Some("auto".into());
+        again.deadline_ms = Some(3000);
+        let next = recall(&a, &ana, again).await.unwrap();
+        assert_ne!(
+            next["items"][0]["id"], out["items"][0]["id"],
+            "not twice in a session"
+        );
+        let mut weak = auto("Check the weather", "tool", "s2");
+        weak.semantic = Some("auto".into());
+        weak.deadline_ms = Some(3000);
+        let none = recall(&a, &ana, weak).await.unwrap();
+        assert!(
+            none["items"].as_array().unwrap().is_empty(),
+            "a weak match stays out"
         );
     }
 

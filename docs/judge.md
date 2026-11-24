@@ -33,14 +33,17 @@ only for an explicit `remember` (someone is waiting) and when an LLM judge retur
 flowchart TB
     C["candidate"] --> N["up to 8 live neighbours of its scope<br/>3 closest by vector (by rank)<br/>3 by text (BM25)<br/>rest by shared entities"]
     C --> S["source passage<br/>(≤ 1,500 chars)"]
-    N --> R1["request 1: relations<br/>rel_1 … rel_8<br/>state = candidate + neighbours"]
-    S --> R2["request 2: the candidate itself<br/>durable · worth · why_ok<br/>state = candidate + passage"]
+    N --> R1["one request per neighbour: rel_n<br/>state = candidate + that neighbour"]
+    S --> R2["one request: the candidate itself<br/>durable · worth · why_ok<br/>state = candidate + passage"]
     R1 & R2 --> V["verdict"]
 ```
 
-A decisions service evaluates every question against the whole state, so the two requests carry
-only what their questions need: relations compare memories and do not need the source; durable,
-worth and why_ok look at the candidate and its source, not at the neighbours. The LLM judge gets
+A decisions service makes one model call per question with the whole state (twice), so each
+request carries only what its questions need: a relation compares the candidate with one neighbour
+and needs neither the others nor the source; durable, worth and why_ok look at the candidate and
+its source, not at the neighbours. Measured on 5 real candidates with 8 neighbours each, one
+request per neighbour took 48 % fewer input tokens than all neighbours in one state (81,642 against
+157,704), with the same top answer in 36 of 40 relations. The LLM judge gets
 everything in one call.
 
 | Question | Type | Asks |

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 mod codex;
-mod steps;
+mod tool;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum HookClient {
@@ -203,6 +203,9 @@ pub fn turn_usage(transcript: &str) -> TurnUsage {
     u
 }
 
+/// Every tool call waits for its search: a short server deadline (a third of it for the meaning).
+const TOOL_DEADLINE_MS: u64 = 600;
+
 /// Characters of the previous answer added to the prompt's search.
 pub const PREVIOUS_CHARS: usize = 600;
 /// The previous answer is near the end: the person is waiting, a long transcript is not read whole.
@@ -351,20 +354,9 @@ async fn stop(c: &Client, input: &Value, client: HookClient) -> Result<Option<St
         .and_then(|p| std::fs::read_to_string(p).ok())
         .unwrap_or_default();
     let at = now_ms();
-    let mut eps = Vec::new();
-    if client == HookClient::ClaudeCode && steps::enabled() {
-        // The turn's other messages happened before its answer: keep them in that order.
-        let notes = steps::notes(&transcript, text);
-        let n = notes.len() as i64;
-        for (i, note) in notes.into_iter().enumerate() {
-            let t = at - n + i as i64;
-            eps.push(json!({"episode_id": format!("{thread}:{t}:n{i}"), "thread": thread, "source": "chat", "role": "tool",
-                "agent": client.source(), "occurred_at": t, "text": note}));
-        }
-    }
-    eps.push(json!({"episode_id": format!("{thread}:{at}:a"), "thread": thread, "source": "chat", "role": "assistant", "agent": client.source(),
-        "occurred_at": at, "text": text}));
-    c.post("/v1/episodes", &json!({"episodes": eps})).await?;
+    let ep = json!({"episode_id": format!("{thread}:{at}:a"), "thread": thread, "source": "chat", "role": "assistant", "agent": client.source(),
+        "occurred_at": at, "text": text});
+    c.post("/v1/episodes", &json!({"episodes": [ep]})).await?;
     let usage = match client {
         HookClient::ClaudeCode => turn_usage(&transcript),
         HookClient::Codex => match codex::turn_usage(&transcript, input) {
@@ -383,24 +375,16 @@ async fn stop(c: &Client, input: &Value, client: HookClient) -> Result<Option<St
     Ok(None)
 }
 
-/// One PostToolUse: the call and the start of its output, masked (see `steps`).
+/// Before a tool runs: the memory that best matches what the call is for, if it is new to the
+/// session, matches by meaning and scores high enough (decided by the server).
 async fn tool(c: &Client, input: &Value, client: HookClient) -> Result<Option<String>, String> {
-    let Some(text) = steps::step(input) else {
+    let Some(query) = tool::query(input) else {
         return Ok(None);
     };
-    let thread = client.thread(input);
-    let at = now_ms();
-    let call = input["tool_use_id"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
-    let cwd = PathBuf::from(input["cwd"].as_str().unwrap_or("."));
-    let ep = json!({"episode_id": format!("{thread}:{at}:t:{call}"), "thread": thread, "source": "chat", "role": "tool",
-        "agent": client.source(), "occurred_at": at, "text": text,
-        "project_id": repo_of(&cwd).map(|r| r.1).unwrap_or_default()});
-    c.post("/v1/episodes", &json!({"episodes": [ep]})).await?;
-    Ok(None)
+    let out = c.post("/v1/recall", &json!({"query": query, "surface": "tool", "limit": 10, "raw": "off", "semantic": "auto",
+        "deadline_ms": TOOL_DEADLINE_MS, "session": client.session(input), "thread": client.thread(input)})).await?;
+    let mem = out["text"].as_str().unwrap_or("");
+    Ok((!mem.trim().is_empty()).then(|| context("PreToolUse", mem)))
 }
 
 pub async fn run(args: &[String]) {
@@ -420,14 +404,16 @@ pub async fn run(args: &[String]) {
         return;
     }
     let input: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
-    // Every tool call runs this hook: without steps on, it ends before any network.
-    if event == "tool" && (client != HookClient::ClaudeCode || !steps::enabled()) {
+    // Every tool call waits for this hook: a call that says nothing searchable ends here.
+    if event == "tool" && (client != HookClient::ClaudeCode || tool::query(&input).is_none()) {
         return;
     }
     // Synchronous hooks get a short deadline: the user is waiting. Codex runs `stop`
     // synchronously too, so it is not lost when `codex exec` exits.
-    let timeout = if matches!(event.as_str(), "stop" | "tool") && client == HookClient::ClaudeCode {
+    let timeout = if event == "stop" && client == HookClient::ClaudeCode {
         Duration::from_secs(20)
+    } else if event == "tool" {
+        Duration::from_millis(TOOL_DEADLINE_MS + 700)
     } else {
         Duration::from_secs(3)
     };
