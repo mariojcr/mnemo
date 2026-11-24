@@ -12,7 +12,7 @@ providers receive content.
 |---|---|---|
 | Claude Code / Codex hooks | Prompts, final answers, session metadata and available token usage; repository identity at session start; before each tool call, what it is for (a command's description, a path, a pattern, a URL without its credentials, query or fragment) as a search query, not stored | Your mnemo server |
 | Storage | Raw episodes, memories, entities, revisions and usage records | Your ClickHouse deployment |
-| Embeddings | Memory text and search queries | ONNX Runtime inside the mnemo process, on the CPU |
+| Embeddings | Memory text, judge passages, entity names and search queries (including what a tool call is for) | Your configured embeddings endpoint (`MNEMO_EMBED_URL`, by default the extraction model's) |
 | Distillation and judging | Conversation passages, proposed memories and relevant existing memories | Your configured extraction / judge endpoints |
 | Usage evaluation | Injected memories and the completed answer | Your configured judge, when evaluation requires it |
 | Recall | Selected memories and, when needed, source excerpts | The requesting client, which may pass them to its model provider |
@@ -24,8 +24,8 @@ entire transcript file as a file attachment. Web content is saved explicitly wit
 client does not automatically capture every fetched page. See [clients](clients.md).
 
 Prompts and answers can contain credentials or confidential text. Enable capture only for sessions
-you intend to retain, and choose model endpoints appropriate for that content. Running embeddings
-locally does not make distillation local: configure a local LLM endpoint if that is required.
+you intend to retain, and choose model endpoints appropriate for that content: the extraction,
+judge and embeddings endpoints all receive it. Configure local endpoints if that is required.
 
 ## Access
 

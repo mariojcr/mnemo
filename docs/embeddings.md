@@ -5,67 +5,39 @@ SPDX-License-Identifier: Apache-2.0
 
 # Embeddings
 
-mnemo computes every vector itself, with **EmbeddingGemma 2** in fp32 on ONNX Runtime, on the
-CPU. There is no embedding service and no other embedding model.
+mnemo gets every vector from **EmbeddingGemma 2** (`google/embeddinggemma-2`, 768 dimensions)
+behind an OpenAI-compatible `/embeddings` endpoint: in practice the inference gateway, which serves
+it with vLLM. The image carries no model and no inference runtime.
 
 ```mermaid
 flowchart LR
-    subgraph image["container image"]
-        ORT["libonnxruntime 1.28.3<br/>sha256-pinned"]
-        MOD["EmbeddingGemma 2 fp32<br/>pinned revision, sha256-pinned<br/>1.1 GB"]
-    end
-    subgraph process["mnemo process"]
-        CHK["check size and sha256<br/>(again every minute until they match)"] --> LOAD["load session<br/>(MNEMO_EMBED_THREADS, 4)"]
-        LOAD --> SEM["one inference at a time"]
-    end
-    MOD --> CHK
-    ORT --> LOAD
-    SEM --> Q["embed_query (recall)"]
-    SEM --> D["embed (new memories)"]
-    SEM --> P["embed_source (judge passages)"]
-    SEM --> N["embed_entity (name merging)"]
+    Q["embed_query (recall)"] -- "straight, one request" --> GW["POST {MNEMO_EMBED_URL}/embeddings<br/>model = MNEMO_EMBED_MODEL"]
+    BG["embed (new memories), embed_source (judge passages),<br/>embed_entity (name merging)"] -- "one group of ≤ 32 at a time" --> GW
+    GW --> V["vectors in the order sent, checked and made unit length"]
 ```
 
-- The image carries the model. mnemo **never downloads** it: it reads `MNEMO_EMBED_DIR` (outside
-  the image, `$MNEMO_HOME/models/embeddinggemma-2`) and the library at `ORT_DYLIB_PATH`. While the
-  files are missing or do not match, the embedder reports why and distillation waits.
-- Prompts: `task: search result | query: ` for questions, `title: none | text: ` for what is stored.
-- 768 dimensions, normalized. The globe keeps them quantized to int8.
-- `MNEMO_EMBED=off` runs without vectors: no search by meaning, judge passages picked by word
-  overlap, no merging of translated entity names.
-
-## Why fp32
-
-Measured on an 8-core laptop CPU (i7-11800H, 4 threads), warm, median of 5:
-
-| Build | 16 tokens | 53 tokens (a typical memory) | 132 tokens | 2,048 tokens | RAM loaded |
-|---|---|---|---|---|---|
-| **fp32** | 29 ms | **50 ms** | 111 ms | 4.1 s | 684 MB |
-| int8 | 82 ms | 113 ms | 178 ms | 4.3 s | 457 MB |
-| q4 | 24 ms | 52 ms | 127 ms | 4.4 s | 404 MB |
-
-The int8 build uses dynamic quantization: it quantizes activations on every call, which costs
-more than it saves on short texts. Vectors barely change between fp32 and int8 (mean cosine
-0.9999); q4 drifts more (0.985). Going from 4 to 8 threads gains about 10 %.
+- `MNEMO_EMBED_MODEL` turns it on (for example `altherium/embeddinggemma-2`). The endpoint and key
+  are `MNEMO_EMBED_URL` and `MNEMO_EMBED_KEY`, by default the extraction model's
+  (`MNEMO_LLM_URL`, `MNEMO_LLM_KEY`). Without a model, or with `MNEMO_EMBED=off`, there are no
+  vectors: no search by meaning, judge passages picked by word overlap, no merging of translated
+  entity names.
+- Prompts: `task: search result | query: ` for questions, `title: none | text: ` for what is stored,
+  sent as part of the text (EmbeddingGemma's retrieval prompts).
+- An answer with fewer or more vectors than texts, a repeated index, an empty or zero vector or
+  vectors of different sizes is an error: a memory stored with the wrong vector could never be
+  found again. A pass that cannot get its vectors waits and retries.
+- Served with vLLM, text only: `vllm serve google/embeddinggemma-2 --runner pooling
+  --limit-mm-per-prompt image=0,audio=0,video=0` loads the 271M-parameter text model (~0.5 GB of
+  GPU memory). The vision and audio towers are not needed for memories.
 
 ## Limits
 
-Cost grows with the square of the length:
-
-```mermaid
-xychart-beta
-    title "Extra peak memory by text length"
-    x-axis "tokens per text" [1024, 2048, 4096, 8192]
-    y-axis "extra MB" 0 --> 6000
-    bar [120, 500, 1700, 5900]
-```
-
-| Setting | Default | Why |
+| Setting | Value | Why |
 |---|---|---|
-| `MNEMO_EMBED_MAX_TOKENS` | 2,048 (longer texts are truncated) | a native 8K text needs ~6 GB and 14 s; real memories are at most ~200 tokens (median 53) |
-| batch size | ≤ 8,192 positions per call; background work in groups of ≤ 256 | a huge query or many long texts cannot exhaust memory; a search waits for one small group, not a whole batch |
+| text length | 8,000 characters (longer texts are cut) | memories are a few hundred tokens and a judge passage 1,500 characters; a longer text would only tie up the model |
 | query length | 2,000 characters | a search never needs more |
-| concurrency | one inference at a time; searches have their own turn and go ahead of background work between its groups | waiting work is abandoned at its deadline, not queued; backfill and distillation do not push searches past their deadline |
+| background groups | 32 texts per request, one request at a time | a search never waits behind a batch: it goes straight to the endpoint |
+| deadlines | the caller's | waiting work is abandoned at its deadline, not queued |
 
 ## When the model changes
 
@@ -83,5 +55,5 @@ Status → *Recalculate all vectors* (`POST /v1/admin/reembed`) forces a full re
 
 ## Metering
 
-Every inference is recorded in `llm_calls` with kind `embed`, `embed_query`, `embed_source` or
-`embed_entity`, its token count and how long the inference took (not the wait for a turn).
+Every request is recorded in `llm_calls` with kind `embed`, `embed_query`, `embed_source` or
+`embed_entity`, the endpoint's token count and how long the request took.

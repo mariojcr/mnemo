@@ -8,11 +8,11 @@ SPDX-License-Identifier: Apache-2.0
 ## Run it
 
 mnemo brings no infrastructure: you provide ClickHouse and, for distillation, an OpenAI-compatible
-model. The image carries the binary, ONNX Runtime and the embedding model.
+model and an embeddings model behind the same kind of endpoint. The image carries only the binary.
 
 ```mermaid
 flowchart LR
-    IMG["image: binary + ONNX Runtime + EmbeddingGemma"] --> W["mnemo serve (one writer)"]
+    IMG["image: the mnemo binary"] --> W["mnemo serve (one writer)"]
     IMG --> R["mnemo api (read replicas, optional)"]
     W & R --> CHS[("your ClickHouse")]
     W --> LLM["your extraction model"]
@@ -87,12 +87,9 @@ remove the old one from the file once no older binary is in use.
 | Layer | Content | Pinned by |
 |---|---|---|
 | base | debian trixie-slim | digest |
-| runtime | `libonnxruntime.so.1.28.3` | sha256 of the official release |
-| model | EmbeddingGemma 2 fp32 + tokenizer (1.1 GB) | revision + sha256 per file |
 | app | the `mnemo` binary | built in the `build` stage, from `Cargo.lock` |
 
-`make image` builds the `runtime` stage of the `Dockerfile`. The model layer sits before the binary,
-so it is reused between builds. The image (~1.25 GB) runs as user `mnemo` with `MNEMO_HOME=/data`,
+`make image` builds the `runtime` stage of the `Dockerfile`. The image runs as user `mnemo` with `MNEMO_HOME=/data`,
 listens on `0.0.0.0:7700` and checks itself with `mnemo health`.
 
 ## Configuration
@@ -125,10 +122,9 @@ the environment wins). Admin → Status shows the configuration; nothing is edit
 | `MNEMO_DECIDE_URL`, `MNEMO_DECIDE_KEY` | `MNEMO_LLM_URL`, `MNEMO_LLM_KEY` | the decisions service the judge calls (`POST /decisions`) |
 | `MNEMO_DECIDE_MODEL` | – | without it there is no decisions judge |
 | `MNEMO_JUDGE`, `MNEMO_JUDGE_TIMEOUT` | `auto`, 180 s | `auto`, `decisions`, `llm` or `heuristic` ([the judge](judge.md#which-judge)), and its limit per verdict |
-| `MNEMO_EMBED` | on | `off` disables semantic search |
-| `MNEMO_EMBED_DIR` | the image's model | EmbeddingGemma's files; outside the image `$MNEMO_HOME/models/embeddinggemma-2` (`./models/…` if `MNEMO_HOME` is unset) |
-| `ORT_DYLIB_PATH` | `libonnxruntime.so` (set in the image) | the ONNX Runtime library |
-| `MNEMO_EMBED_THREADS`, `MNEMO_EMBED_MAX_TOKENS` | 4, 2048 | embedder bounds |
+| `MNEMO_EMBED_MODEL` | – | the embeddings model (EmbeddingGemma 2, e.g. `altherium/embeddinggemma-2`); without it there is no search by meaning ([embeddings](embeddings.md)) |
+| `MNEMO_EMBED_URL`, `MNEMO_EMBED_KEY` | `MNEMO_LLM_URL`, `MNEMO_LLM_KEY` | its OpenAI-compatible root (`POST /embeddings`) |
+| `MNEMO_EMBED` | on | `off` disables semantic search even with a model |
 
 ### Distillation and value
 
@@ -173,7 +169,7 @@ still stored meanwhile.
 |---|---|
 | `the extraction model` | `MNEMO_LLM_URL`, `MNEMO_LLM_KEY`, network: mnemo probes `<url>/models`, then `/health` at the root |
 | `the judge` | `MNEMO_DECIDE_URL` (the same probe), or the extraction model when it judges |
-| `the embedder` | still loading at start, or its files are missing or unreadable: `MNEMO_EMBED_DIR`, `ORT_DYLIB_PATH` |
+| `the embedder` | `MNEMO_EMBED_URL` (the same probe), `MNEMO_EMBED_KEY` and that the key may use `MNEMO_EMBED_MODEL` |
 
 ## Metrics in ClickHouse
 

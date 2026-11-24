@@ -12,9 +12,9 @@ macOS, Windows and ARM64 clients are not published. Container emulation on other
 been validated; do not assume that installing the Claude Code plugin also installs a native client.
 An HTTP MCP client can connect to a supported server without the standalone binary.
 
-The server needs ClickHouse. The image includes ONNX Runtime and an embedding model (~1.3 GB for
-the image); RAM needs grow with the in-memory index. An extraction model runs separately and has
-its own resource requirements. There is no measured universal minimum RAM recommendation yet.
+The server needs ClickHouse. Search by meaning needs an embeddings endpoint serving EmbeddingGemma 2
+(`MNEMO_EMBED_MODEL`, see [embeddings](embeddings.md)); RAM needs grow with the in-memory index. The
+extraction and embedding models run separately and have their own resource requirements. There is no measured universal minimum RAM recommendation yet.
 
 ## Start the server
 
