@@ -38,13 +38,13 @@ flowchart LR
     MERGE["entity merge loop"]
     EMBL["embeddings backfill loop"]
     JUDGE["judge"]
-    ONNX["onnx embedder"]
+    EMB["embedder (/embeddings)"]
     STORE[("Db + RawStore<br/>ClickHouse")]
 
     H & M & W --> AUTH --> OPS --> APP
     APP --> GLOBE
     APP --> STORE
-    APP --> ONNX
+    APP --> EMB
     DIST --> JUDGE
     DIST --> APP
     MERGE --> APP
@@ -103,11 +103,10 @@ flowchart LR
     MN -- "/chat/completions" --> LLM["extraction model"]
     MN -- "/decisions" --> DEC["decisions model"]
     MN -- "OIDC discovery, JWKS, token" --> IDP["identity provider"]
-    MN -. "no network" .- ONNX["EmbeddingGemma (in process)"]
+    MN -- "/embeddings" --> EMBM["embeddings model (EmbeddingGemma 2)"]
 ```
 
-The embedding model ships inside the image: mnemo opens no connection for embeddings and never
-downloads anything at runtime.
+mnemo never downloads anything at runtime: every model is an endpoint you configure.
 
 ## Source map
 
@@ -121,7 +120,6 @@ downloads anything at runtime.
 | `model.rs`, `episode.rs` | memories, entities and episodes |
 | `globe.rs`, `query.rs`, `text.rs`, `facts.rs` | in-RAM index, question parsing, BM25, hard-fact veto |
 | `distill.rs`, `judge.rs`, `llm.rs` | extraction prompt and validation, the judge, the model client |
-| `onnx.rs` | the embedder |
 | `render.rs`, `galaxy.rs` | JSON and cited text blocks; the map, served as tiles |
 | `records.rs` | things with identity over time (alerts, pages, jobs) |
 | `meter.rs`, `value.rs` | cost and value |

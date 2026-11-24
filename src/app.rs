@@ -1982,15 +1982,36 @@ fn entity_or_person(g: &Globe, e: &str, scope: &str, readers: &[String]) -> Opti
         })
 }
 
+/// Texts per background request: a search arriving meanwhile waits for none of them.
+const EMBED_BATCH: usize = 32;
+/// Characters kept of each text. Memories are a few hundred tokens; a judge passage, 1,500
+/// characters; a longer text would only tie up the model.
+pub const EMBED_MAX_CHARS: usize = 8_000;
+
 /// `Fake(None)` does not respond.
 pub enum Embedder {
-    Local(Arc<crate::onnx::Local>),
+    /// An OpenAI-compatible `/embeddings` endpoint (the inference gateway).
+    Remote {
+        llm: Llm,
+        model: String,
+        /// Background work sends one group at a time; searches never wait for it.
+        background: Arc<tokio::sync::Semaphore>,
+    },
     #[cfg(test)]
     Fake(Option<Vec<f32>>),
 }
 
 impl Embedder {
-    /// `query`: a search, which goes ahead of background work.
+    pub fn remote(llm: Llm, model: String) -> Embedder {
+        Embedder::Remote {
+            llm,
+            model,
+            background: Arc::new(tokio::sync::Semaphore::new(1)),
+        }
+    }
+
+    /// `query`: a search, which goes straight to the endpoint instead of queueing behind
+    /// background work.
     pub async fn embed(
         &self,
         texts: &[String],
@@ -1998,11 +2019,33 @@ impl Embedder {
         query: bool,
     ) -> Res<Vec<Vec<f32>>> {
         match self {
-            Embedder::Local(o) => {
-                match tokio::time::timeout(timeout, o.embed(texts, timeout, query)).await {
-                    Ok(r) => r,
-                    Err(_) => Err(format!("embeddings: more than {} s", timeout.as_secs())),
+            Embedder::Remote {
+                llm,
+                model,
+                background,
+            } => {
+                let texts: Vec<String> = texts
+                    .iter()
+                    .map(|t| t.chars().take(EMBED_MAX_CHARS).collect())
+                    .collect();
+                if query {
+                    return llm.embed(model, &texts, timeout).await;
                 }
+                let deadline = Instant::now() + timeout;
+                let late = || format!("embeddings: more than {} s", timeout.as_secs());
+                let _turn = tokio::time::timeout(timeout, background.acquire())
+                    .await
+                    .map_err(|_| late())?
+                    .map_err(|e| e.to_string())?;
+                let mut out = Vec::with_capacity(texts.len());
+                for group in texts.chunks(EMBED_BATCH) {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        return Err(late());
+                    }
+                    out.extend(llm.embed(model, group, left).await?);
+                }
+                Ok(out)
             }
             #[cfg(test)]
             Embedder::Fake(v) => v
@@ -2012,9 +2055,9 @@ impl Embedder {
         }
     }
 
-    pub async fn ready(&self, _timeout: Duration) -> Res<()> {
+    pub async fn ready(&self, timeout: Duration) -> Res<()> {
         match self {
-            Embedder::Local(o) => o.ready(),
+            Embedder::Remote { llm, .. } => llm.ready(timeout).await,
             #[cfg(test)]
             Embedder::Fake(v) => v
                 .as_ref()
@@ -2056,6 +2099,80 @@ pub struct RecallArgs {
 
 #[cfg(test)]
 mod tests {
+
+    #[tokio::test]
+    async fn the_embedder_sends_background_work_in_small_groups_and_keeps_the_order() {
+        use super::{EMBED_MAX_CHARS, Embedder};
+        use crate::llm::Llm;
+        use axum::{Json, Router, extract::State, routing::post};
+        use serde_json::{Value, json};
+        use std::sync::{Arc, Mutex as M};
+        use std::time::Duration;
+        type Seen = Arc<M<Vec<(String, usize, usize)>>>;
+        async fn embeddings(State(seen): State<Seen>, Json(b): Json<Value>) -> Json<Value> {
+            let input: Vec<String> = serde_json::from_value(b["input"].clone()).unwrap();
+            let longest = input.iter().map(|t| t.chars().count()).max().unwrap_or(0);
+            seen.lock()
+                .unwrap()
+                .push((b["model"].as_str().unwrap().into(), input.len(), longest));
+            // The vector says which text it is: its number, parsed from the text.
+            let data: Vec<Value> = input
+                .iter()
+                .enumerate()
+                .rev()
+                .map(|(i, t)| {
+                    let n: f32 = t.split(' ').next().unwrap().parse().unwrap();
+                    json!({"index": i, "embedding": [n, 1.0]})
+                })
+                .collect();
+            Json(json!({"data": data, "usage": {"prompt_tokens": 1}}))
+        }
+        let seen = Seen::default();
+        let app = Router::new()
+            .route("/v1/embeddings", post(embeddings))
+            .with_state(seen.clone());
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+        let e = Embedder::remote(
+            Llm::new(&base, "k").unwrap(),
+            "altherium/embeddinggemma-2".into(),
+        );
+        let texts: Vec<String> = (0..70)
+            .map(|i| format!("{i} {}", "x".repeat(if i == 5 { 20_000 } else { 10 })))
+            .collect();
+        let v = e
+            .embed(&texts, Duration::from_secs(10), false)
+            .await
+            .unwrap();
+        assert_eq!(v.len(), 70);
+        for (i, x) in v.iter().enumerate() {
+            let norm = ((i * i) as f32 + 1.0).sqrt();
+            assert!(
+                (x[0] - i as f32 / norm).abs() < 1e-5,
+                "text {i} got another's vector"
+            );
+        }
+        let calls = seen.lock().unwrap().clone();
+        assert_eq!(
+            calls.iter().map(|c| c.1).collect::<Vec<_>>(),
+            vec![32, 32, 6],
+            "background: groups of 32"
+        );
+        assert!(calls.iter().all(|c| c.0 == "altherium/embeddinggemma-2"));
+        assert!(calls[0].2 <= EMBED_MAX_CHARS, "a long text is cut");
+        seen.lock().unwrap().clear();
+        let q = e
+            .embed(&texts[..40], Duration::from_secs(10), true)
+            .await
+            .unwrap();
+        assert_eq!(q.len(), 40);
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            1,
+            "a search goes in one request"
+        );
+    }
     #[test]
     fn a_subject_with_a_pipe_keeps_its_thread() {
         use crate::storage::Thread;

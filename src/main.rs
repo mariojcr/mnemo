@@ -23,7 +23,6 @@ mod mcp;
 mod meter;
 mod model;
 mod oidc;
-mod onnx;
 mod ops;
 mod query;
 mod records;
@@ -124,22 +123,26 @@ async fn build_app(
         l.with_json(env("MNEMO_LLM_JSON") == "1")
             .without_thinking(env("MNEMO_LLM_THINKING") == "off")
     });
-    let embedder = (env("MNEMO_EMBED") != "off").then(|| {
-        crate::app::Embedder::Local(crate::onnx::Local::start(
-            std::path::PathBuf::from(env_or(
-                "MNEMO_EMBED_DIR",
-                &format!("{}/models/embeddinggemma-2", env_or("MNEMO_HOME", ".")),
-            )),
-            env_or("ORT_DYLIB_PATH", "libonnxruntime.so"),
-            env_or("MNEMO_EMBED_THREADS", "4").parse().unwrap_or(4),
-            // 2,048 tokens: ~0.5 GB extra peak memory and ~2-4 s on CPU; memories stay under 200
-            env_or("MNEMO_EMBED_MAX_TOKENS", "2048")
-                .parse()
-                .unwrap_or(2048),
-        ))
-    });
+    // EmbeddingGemma 2 behind an OpenAI-compatible `/embeddings` (by default the LLM's endpoint and
+    // key). The model's name is the vectors' fingerprint: changing it recomputes them all.
+    let embed_model = env("MNEMO_EMBED_MODEL");
+    let embedder = if env("MNEMO_EMBED") == "off" || embed_model.is_empty() {
+        None
+    } else {
+        llm_from(
+            "MNEMO_EMBED_URL",
+            "MNEMO_EMBED_KEY",
+            Some(("MNEMO_LLM_URL", "MNEMO_LLM_KEY")),
+        )?
+        .map(|l| crate::app::Embedder::remote(l, embed_model.clone()))
+    };
+    if embedder.is_none() && env("MNEMO_EMBED") != "off" {
+        warn!(
+            "no embedding model (MNEMO_EMBED_MODEL and an endpoint): searching by meaning is off"
+        );
+    }
     let embed_model = if embedder.is_some() {
-        crate::onnx::MODEL_NAME.to_string()
+        embed_model
     } else {
         String::new()
     };
@@ -256,7 +259,7 @@ async fn build_app(
         "role": match &writer { Some(w) => format!("replica of {w}"), None => "writer".into() },
         "clickhouse": {"url": env("MNEMO_CH_URL"), "db": env_or("MNEMO_CH_DB", "mnemo"), "replicated": replicated},
         "llm": {"url": env("MNEMO_LLM_URL"), "extract_model": cfg.extract_model},
-        "embed": {"model": cfg.embed_model, "runtime": "onnx"},
+        "embed": {"model": cfg.embed_model, "url": if cfg.embed_model.is_empty() { String::new() } else { env_or("MNEMO_EMBED_URL", &env("MNEMO_LLM_URL")) }},
         "judge": judge_name,
         "judge_timeout_s": judge_timeout.as_secs(),
         "settle_seconds": cfg.settle_ms / 1000,

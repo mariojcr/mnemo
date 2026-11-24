@@ -22,7 +22,7 @@ flowchart LR
         API["API · MCP"]
         GLOBE[("Globe<br/>in-RAM index")]
         DIST["Distillation loop"]
-        EMB["EmbeddingGemma<br/>(ONNX, in process)"]
+        EMB["EmbeddingGemma 2<br/>(your /embeddings endpoint)"]
     end
 
     CH[("ClickHouse<br/>episodes + log")]
@@ -60,7 +60,7 @@ flowchart LR
 | [Distillation](distillation.md) | From raw episodes to memories: threads, passes, extraction |
 | [The judge](judge.md) | How a candidate becomes new, a duplicate, an update or nothing |
 | [Recall](recall.md) | How a question is answered in milliseconds, and the scoring |
-| [Embeddings](embeddings.md) | EmbeddingGemma inside mnemo: why fp32, limits, re-embedding |
+| [Embeddings](embeddings.md) | EmbeddingGemma 2 behind an endpoint: settings, limits, re-embedding |
 | [Storage](storage.md) | ClickHouse tables, the append-only log and the single writer |
 | [Auth and scopes](auth.md) | Who can see what, keys, acting for someone, OIDC and OAuth for MCP, connections |
 | [Clients](clients.md) | The Claude Code plugin and its hooks, Codex, MCP tools, the HTTP API |

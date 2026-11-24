@@ -71,7 +71,7 @@ or everyone's, as numbers only.
 The judge can dominate background tokens (about 80 % in two weeks of one person's use), because a
 decisions service evaluates every question against the whole state; that is why each relation goes
 in its own request with its own neighbour and the source is cut to a passage
-([the judge](judge.md)). Embeddings run inside mnemo: metered, but no API spend. Measured on
+([the judge](judge.md)). Embeddings go to the embeddings endpoint, metered like any other call. Measured on
 Claude Code sessions, injected memory was under 0.02 % of what those sessions read.
 
 `MNEMO_PRICES=claude-sonnet=3,0.3,3.75,15;…` (dollars per million tokens: input, cache read, cache

@@ -37,6 +37,11 @@ services:
       MNEMO_LLM_URL: ${MNEMO_LLM_URL:-}
       MNEMO_LLM_KEY: ${MNEMO_LLM_KEY:-}
       MNEMO_EXTRACT_MODEL: ${MNEMO_EXTRACT_MODEL:-}
+      # Search by meaning: EmbeddingGemma 2 behind an OpenAI-compatible /embeddings (by default at
+      # MNEMO_LLM_URL with MNEMO_LLM_KEY). Without it, search is by words and names only.
+      MNEMO_EMBED_MODEL: ${MNEMO_EMBED_MODEL:-}
+      MNEMO_EMBED_URL: ${MNEMO_EMBED_URL:-}
+      MNEMO_EMBED_KEY: ${MNEMO_EMBED_KEY:-}
     volumes:
       - mnemo:/data
 

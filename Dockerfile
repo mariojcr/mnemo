@@ -52,37 +52,13 @@ FROM scratch AS release-files
 COPY --from=release /out/ /
 
 FROM ${BASE_REGISTRY}/debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS runtime
-# libstdc++ for ONNX Runtime. The model directory is created 755 here: BuildKit's ADD gives
-# missing parents its --chmod mode (644, not traversable).
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
+# Embeddings come from an OpenAI-compatible endpoint (MNEMO_EMBED_MODEL): no model in the image.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --create-home --home-dir /data mnemo \
-    && install -d -m 755 /usr/local/share/mnemo/embeddinggemma-2/onnx
-ADD --checksum=sha256:db14e4863bd37893fc59729d986ab2a0d043d10b7d44da1913c4982b7e3d009c \
-    https://github.com/microsoft/onnxruntime/releases/download/v1.28.3/onnxruntime-linux-x64-1.28.3.tgz /tmp/ort.tgz
-RUN tar -xzf /tmp/ort.tgz -C /tmp \
-    && cp /tmp/onnxruntime-linux-x64-1.28.3/lib/libonnxruntime.so.1.28.3 /usr/local/lib/ \
-    && ln -s libonnxruntime.so.1.28.3 /usr/local/lib/libonnxruntime.so \
-    && rm -rf /tmp/ort.tgz /tmp/onnxruntime-linux-x64-1.28.3
-ENV ORT_DYLIB_PATH=/usr/local/lib/libonnxruntime.so
-# Before the binary: the model layer does not change between builds, so it is reused.
-ARG EG2=https://huggingface.co/onnx-community/embeddinggemma-2-ONNX/resolve/daa72c51243991dfcaf9f9137d2c573d8f7790c0
-ADD --chmod=644 --checksum=sha256:bc47de15f81208a5c99e5ab10f746d5e33b51ea228b7dc0bef9c133a94f1c1c3 \
-    ${EG2}/onnx/model.onnx /usr/local/share/mnemo/embeddinggemma-2/onnx/model.onnx
-ADD --chmod=644 --checksum=sha256:9fd452bfc6916e5a92f080f8dada35598ca4512b21c65897d4c5974d5f9630a2 \
-    ${EG2}/onnx/model.onnx_data /usr/local/share/mnemo/embeddinggemma-2/onnx/model.onnx_data
-ADD --chmod=644 --checksum=sha256:4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4 \
-    ${EG2}/tokenizer.json /usr/local/share/mnemo/embeddinggemma-2/tokenizer.json
-ENV MNEMO_EMBED_DIR=/usr/local/share/mnemo/embeddinggemma-2
+    && useradd --system --uid 10001 --create-home --home-dir /data mnemo
 COPY LICENSE /usr/share/doc/mnemo/
 COPY --from=build /out/mnemo /usr/local/bin/mnemo
 USER mnemo
-# If the image user cannot read the library or the model, mnemo still starts, the embedder never
-# answers and distillation waits forever: better to fail the build.
-RUN for f in "$ORT_DYLIB_PATH" "$MNEMO_EMBED_DIR/onnx/model.onnx" "$MNEMO_EMBED_DIR/onnx/model.onnx_data" \
-        "$MNEMO_EMBED_DIR/tokenizer.json"; do \
-      test -r "$f" || { echo "the mnemo user cannot read $f" >&2; exit 1; }; \
-    done
 ENV MNEMO_HOME=/data MNEMO_LISTEN=0.0.0.0:7700
 EXPOSE 7700
 VOLUME /data

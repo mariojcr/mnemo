@@ -28,10 +28,6 @@ jsonwebtoken = { version = "10", default-features = false, features = ["rust_cry
 # Verifies the signature of published binaries (`mnemo update`); jsonwebtoken already depended on it.
 ed25519-dalek = "2.2"
 base64 = "0.22"
-# In-process embeddings: ONNX Runtime loaded at run time (the official library ships in the
-# image, verified by sha256) and the Hugging Face tokenizer.
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "std"] }
-tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"] }
 
 [features]
 # Integration tests (`tests/`): they talk to a running mnemo server. Without the feature they are
