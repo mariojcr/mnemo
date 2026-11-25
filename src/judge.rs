@@ -13,10 +13,24 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 pub const REL_MIN: f32 = 0.6;
-/// Probability that the existing memory is outdated AS A WHOLE (`updates` + `contradicts`) from which
-/// it is closed. Measured on 80 real closings with gold labels: with `partly` as an option and this
-/// sum, 20 of 30 true updates closed and 1 of 7 still-true memories (v0.2.0: 25 of 30 and 4 of 7).
-pub const CLOSE_MIN: f32 = 0.5;
+/// First step to close a neighbour: the top answer is `updates` or `contradicts`, and together they
+/// reach this. Only those neighbours are asked [`OUTDATED_QUESTION`].
+///
+/// Measured on 2026-11-25 against blind gold labels for 475 of 2,457 real candidate/neighbour pairs.
+/// Only 1.5 % of neighbours are true updates, so even a good ranking (AUC 0.97) closes many that are
+/// still true.
+///
+/// | Rule | Closings | Wrong | True updates caught |
+/// |---|---|---|---|
+/// | 0.3.0: `updates` + `contradicts` ≥ 0.5 | 75 | 52 | 22 of 38 |
+/// | these two steps, no events, one per candidate | 21 | 8 | 10 of 38 |
+pub const CLOSE_MIN: f32 = 0.4;
+/// Second step: the probability that EVERYTHING in the neighbour is outdated. This yes/no is
+/// calibrated low (true updates score 0.01 to 0.27), so the bar is low too.
+pub const OUTDATED_MIN: f32 = 0.08;
+/// An event records what happened; a later change does not make it untrue.
+const NEVER_CLOSED: &str = "event";
+pub const OUTDATED_QUESTION: &str = "Now that the CANDIDATE memory is known, is EVERYTHING the EXISTING memory says outdated or no longer true, so that showing it again would only mislead? Answer no if any part of it is still true or still useful, if they are about different things, if the existing memory gives a reason, a cause, a limit or a step that still holds, or if it records something that happened (an event stays true as history).";
 pub const WORTH_MIN: f32 = 0.45;
 /// Below this, the candidate is treated as a transient state.
 pub const DURABLE_MIN: f32 = 0.5;
@@ -28,8 +42,10 @@ pub struct Relation {
     /// same | updates | partly | contradicts | different
     pub kind: String,
     pub p: f32,
-    /// Probability that the existing memory is outdated as a whole; closes it from [`CLOSE_MIN`].
+    /// Probability that the existing memory is outdated as a whole (`updates` + `contradicts`).
     pub close: f32,
+    /// The answer to [`OUTDATED_QUESTION`]; 1.0 for judges that have no second step.
+    pub outdated: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -49,27 +65,65 @@ pub enum Outcome {
     Drop,
 }
 
+/// Whether the relation passes both steps to close its neighbour.
+pub fn closes(r: &Relation) -> bool {
+    closing(&r.kind) && r.close >= CLOSE_MIN && r.outdated >= OUTDATED_MIN
+}
+
 /// `explicit`: asked for with `remember`, so its usefulness is not questioned.
 pub fn outcome(v: &Verdict, explicit: bool) -> Outcome {
-    let mut supersede = Vec::new();
+    let mut best: Option<&Relation> = None;
     for r in &v.relations {
         // Doubtful: merge nothing and close nothing; nobody reviews them by hand.
         if r.kind == "same" && r.p >= REL_MIN {
             return Outcome::Duplicate(r.neighbor.clone());
         }
-        // `partly` never closes: what is still true in the existing memory would be lost.
-        if r.close >= CLOSE_MIN {
-            supersede.push(r.neighbor.clone());
+        // `partly` never closes: what is still true in the existing memory would be lost. One
+        // closing per candidate, the surest: a new memory that "closes" five is wrong about most.
+        if closes(r) && best.is_none_or(|b| r.close > b.close) {
+            best = Some(r);
         }
     }
     if !explicit && v.worth < WORTH_MIN {
         return Outcome::Drop;
     }
-    if supersede.is_empty() {
-        Outcome::Insert
-    } else {
-        Outcome::Supersede(supersede)
+    match best {
+        Some(r) => Outcome::Supersede(vec![r.neighbor.clone()]),
+        None => Outcome::Insert,
     }
+}
+
+/// The second step, for the neighbours (by index) that passed the first: one request each, with
+/// the candidate and that neighbour only.
+pub fn outdated_requests(
+    cand: &Memory,
+    neighbors: &[Memory],
+    which: &[usize],
+) -> Vec<(Value, Value)> {
+    which
+        .iter()
+        .filter_map(|&i| {
+            let mut ex = mem_json(neighbors.get(i)?);
+            ex["n"] = json!(i + 1);
+            let st = json!({"candidate": mem_json(cand), "existing": [ex]});
+            let q = json!({"outdated": {"type": "noul", "instructions": OUTDATED_QUESTION}});
+            Some((st, q))
+        })
+        .collect()
+}
+
+/// Neighbours worth the second question: they pass the first step and are not events.
+pub fn needs_outdated(v: &Verdict, neighbors: &[Memory]) -> Vec<usize> {
+    v.relations
+        .iter()
+        .enumerate()
+        .filter(|(i, r)| {
+            closing(&r.kind)
+                && r.close >= CLOSE_MIN
+                && neighbors.get(*i).is_some_and(|n| n.kind != NEVER_CLOSED)
+        })
+        .map(|(i, _)| i)
+        .collect()
 }
 
 fn mem_json(m: &Memory) -> Value {
@@ -321,6 +375,8 @@ pub fn parse_answers(answers: &Value, neighbors: &[Memory]) -> Verdict {
             kind,
             p,
             close,
+            // asked afterwards, and only of those that pass the first step
+            outdated: 0.0,
         });
     }
     Verdict {
@@ -372,6 +428,7 @@ pub fn heuristic(cand: &Memory, neighbors: &[Memory]) -> Verdict {
                 kind: kind.into(),
                 p,
                 close: 0.0,
+                outdated: 1.0,
             }
         })
         .collect();
@@ -388,12 +445,15 @@ pub fn heuristic(cand: &Memory, neighbors: &[Memory]) -> Verdict {
 /// the two values for good; when in doubt, keep both.
 pub fn guard(mut v: Verdict, cand: &Memory, neighbors: &[Memory]) -> Verdict {
     for r in &mut v.relations {
-        if r.kind != "same" {
-            continue;
-        }
         let Some(n) = neighbors.iter().find(|n| n.id == r.neighbor) else {
             continue;
         };
+        if n.kind == NEVER_CLOSED {
+            r.close = 0.0;
+        }
+        if r.kind != "same" {
+            continue;
+        }
         // The same alert at 10:00 and 10:15 fired again: merging them would lose the recurrence.
         if cand.kind == "event"
             && n.kind == "event"
@@ -488,6 +548,8 @@ pub fn parse_llm(text: &str, neighbors: &[Memory]) -> Option<Verdict> {
                 kind: kind.to_string(),
                 p,
                 close,
+                // no second step: a stated confidence already needs 0.6
+                outdated: 1.0,
             }
         })
         .collect();
@@ -557,7 +619,24 @@ async fn judge_unguarded(
                 }
             }
             match failed {
-                None => return (parse_answers(&Value::Object(answers), neighbors), None),
+                None => {
+                    let mut v = parse_answers(&Value::Object(answers), neighbors);
+                    let which = needs_outdated(&v, neighbors);
+                    let asks = outdated_requests(cand, neighbors, &which)
+                        .into_iter()
+                        .map(|(state, q)| llm.decide(model, state, q, *timeout));
+                    let mut failed = None;
+                    for (i, r) in which.iter().zip(futures::future::join_all(asks).await) {
+                        match r {
+                            Ok(a) => v.relations[*i].outdated = noul(&a, "outdated", 0.0),
+                            Err(err) => failed = Some(format!("decisions did not answer ({err})")),
+                        }
+                    }
+                    match failed {
+                        None => return (v, None),
+                        Some(e) => e,
+                    }
+                }
                 Some(e) => e,
             }
         }
@@ -621,6 +700,7 @@ mod tests {
                     kind: k.to_string(),
                     p: *p,
                     close: if closing(k) { *p } else { 0.0 },
+                    outdated: 1.0,
                 })
                 .collect(),
             durable: 1.0,
@@ -645,9 +725,31 @@ mod tests {
             Outcome::Supersede(vec!["b".into()])
         );
         assert_eq!(
-            outcome(&v(&[("a", "contradicts", 0.45)], 0.9), false),
+            outcome(&v(&[("a", "contradicts", 0.35)], 0.9), false),
             Outcome::Insert,
             "a doubtful relation closes nothing"
+        );
+        assert_eq!(
+            outcome(
+                &v(
+                    &[
+                        ("a", "updates", 0.5),
+                        ("b", "contradicts", 0.8),
+                        ("c", "updates", 0.7)
+                    ],
+                    0.9
+                ),
+                false
+            ),
+            Outcome::Supersede(vec!["b".into()]),
+            "one closing per candidate, the surest"
+        );
+        let mut doubt = v(&[("a", "updates", 0.9)], 0.9);
+        doubt.relations[0].outdated = OUTDATED_MIN - 0.01;
+        assert_eq!(
+            outcome(&doubt, false),
+            Outcome::Insert,
+            "the second step says part of it still holds"
         );
         assert_eq!(
             outcome(&v(&[("a", "partly", 0.9)], 0.9), false),
@@ -750,10 +852,18 @@ mod tests {
                 neighbor: "a".into(),
                 kind: "updates".into(),
                 p: 0.8,
-                close: 0.85
+                close: 0.85,
+                outdated: 0.0
             }
         );
         assert_eq!(v.relations[1].p, 0.0, "no answer means no certainty");
+        assert_eq!(
+            outcome(&v, false),
+            Outcome::Insert,
+            "nothing closes before the second step"
+        );
+        let mut v = v;
+        v.relations[0].outdated = 0.2;
         assert_eq!(
             outcome(&v, false),
             Outcome::Supersede(vec!["a".into()]),
@@ -763,7 +873,7 @@ mod tests {
     }
 
     #[test]
-    fn what_closes_is_the_whole_memory_being_outdated_not_the_top_answer() {
+    fn only_a_top_answer_of_updates_or_contradicts_goes_to_the_second_step() {
         let ns = [m("a", "x")];
         let rel = |p: Value| {
             parse_answers(
@@ -771,21 +881,57 @@ mod tests {
                 &ns,
             )
         };
-        // Real answers from the audit. Gold "update": the top answer is partly, but most of the
-        // probability says the old memory is outdated as a whole.
-        let upd = rel(
+        let mut upd = rel(
             json!({"same": 0.03, "updates": 0.05, "partly": 0.38, "contradicts": 0.51, "different": 0.03}),
         );
+        assert_eq!(needs_outdated(&upd, &ns), vec![0]);
+        upd.relations[0].outdated = 0.1;
         assert_eq!(outcome(&upd, false), Outcome::Supersede(vec!["a".into()]));
-        // Gold "coexist": both still true.
+        // The sum alone closed this in 0.3.0: on real pairs, a top answer of `partly` was mostly a
+        // memory that is still true.
         let both = rel(
             json!({"same": 0.04, "updates": 0.42, "partly": 0.5, "contradicts": 0.02, "different": 0.01}),
         );
+        assert!(needs_outdated(&both, &ns).is_empty());
         assert_eq!(outcome(&both, false), Outcome::Insert);
         let same = rel(
             json!({"same": 0.7, "updates": 0.2, "partly": 0.05, "contradicts": 0.0, "different": 0.05}),
         );
         assert_eq!(outcome(&same, false), Outcome::Duplicate("a".into()));
+    }
+
+    #[test]
+    fn events_are_never_closed_and_the_second_step_asks_one_neighbour_at_a_time() {
+        let mut ev = m("e", "vLLM was upgraded to 0.34 on every node.");
+        ev.kind = "event".into();
+        let ns = [m("a", "x"), ev, m("b", "y")];
+        let cand = m("c", "vLLM was rolled back to 0.33.");
+        let mut verdict = v(
+            &[
+                ("a", "updates", 0.6),
+                ("e", "contradicts", 0.9),
+                ("b", "different", 0.9),
+            ],
+            0.9,
+        );
+        assert_eq!(
+            needs_outdated(&verdict, &ns),
+            vec![0],
+            "not the event, not `different`"
+        );
+        let reqs = outdated_requests(&cand, &ns, &[0]);
+        assert_eq!(reqs.len(), 1);
+        let (state, q) = &reqs[0];
+        assert_eq!(state["existing"].as_array().unwrap().len(), 1);
+        assert_eq!(state["existing"][0]["n"], 1);
+        assert_eq!(q["outdated"]["type"], "noul");
+        verdict = guard(verdict, &cand, &ns);
+        assert_eq!(verdict.relations[1].close, 0.0);
+        assert_eq!(
+            outcome(&verdict, false),
+            Outcome::Supersede(vec!["a".into()]),
+            "the event stays, even with a higher score"
+        );
     }
 
     #[test]
@@ -798,7 +944,8 @@ mod tests {
                 neighbor: "a".into(),
                 kind: "different".into(),
                 p: 0.9,
-                close: 0.0
+                close: 0.0,
+                outdated: 1.0
             },
             "an invented relation does not count"
         );
@@ -808,7 +955,8 @@ mod tests {
                 neighbor: "b".into(),
                 kind: "updates".into(),
                 p: 0.9,
-                close: 0.9
+                close: 0.9,
+                outdated: 1.0
             }
         );
         assert!((v.durable - 0.3).abs() < 1e-6 && v.worth == 1.0 && v.why_ok == 1.0);
