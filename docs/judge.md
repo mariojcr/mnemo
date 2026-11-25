@@ -80,19 +80,41 @@ flowchart TB
     Q1 -- yes --> DUP["Duplicate: add the candidate's episodes<br/>to the existing memory"]
     Q1 -- no --> Q2{"worth < 0.45<br/>(and not explicit)?"}
     Q2 -- yes --> DROP["Drop: stays in the raw store only"]
-    Q2 -- no --> Q3{"p(updates) + p(contradicts)<br/>≥ 0.5 for a neighbour?"}
-    Q3 -- yes --> SUP["Insert and close those memories"]
+    Q2 -- no --> Q3{"a neighbour, not an event, whose top answer<br/>is updates or contradicts, together ≥ 0.4?"}
+    Q3 -- yes --> Q4{"asked again alone: is EVERYTHING<br/>in it outdated? p ≥ 0.08"}
     Q3 -- no --> INS["Insert"]
+    Q4 -- yes --> SUP["Insert and close the surest one"]
+    Q4 -- no --> INS
     INS & SUP --> ADJ["why_ok < 0.4 → drop the why<br/>durable < 0.5 → a fact, preference or<br/>procedure becomes a state"]
 ```
 
-A relation below 0.6 merges nothing, and a neighbour closes only when the probability that it is
-outdated **as a whole** (`updates` plus `contradicts`) reaches 0.5. `partly`, a candidate that
-changes or completes only part of the neighbour, never closes it: the rest is still true. Measured
-on 80 real closings with gold labels (40 held out): v0.2.0, which had no `partly` and closed on
-the top answer at 0.6, closed 25 of 30 true updates and 4 of 7 memories that were still true; this
-rule closes 20 of 30 and 1 of 7. With the extraction model as judge, whose confidence is stated
-rather than measured, `updates` or `contradicts` still needs 0.6. In doubt, both memories are kept. A state with no
+A relation below 0.6 merges nothing. A neighbour closes only in two steps:
+
+1. Its top answer is `updates` or `contradicts`, and together they reach 0.4. `partly`, a
+   candidate that changes or completes only part of the neighbour, never closes it, because the
+   rest is still true.
+2. A second request, with only that neighbour, asks whether everything in it is outdated. The
+   answer must reach 0.08; this yes/no is calibrated low, and true updates score 0.01 to 0.27.
+
+An event never closes: it records what happened, and a later change does not make it untrue. A
+candidate closes at most one memory, the surest.
+
+0.3.0 closed on the sum alone, at 0.5, and in its first 19 hours it closed 58 memories per 100 new
+ones (v0.2.0: 10). The two steps were measured on 2026-11-25 with real candidates and the
+neighbours the judge sees. Blind gold labels were set for 475 of 2,457 pairs: every pair any rule
+could close, plus a sample of the rest. Only 1.5 % of neighbours are true updates, so even a good
+ranking (AUC 0.97) closes many that are still true.
+
+| Rule | Closings | Wrong | True updates caught |
+|---|---|---|---|
+| 0.3.0: `updates` + `contradicts` ≥ 0.5 | 75 | 52 | 22 of 38 |
+| the same, no events, top answer `updates` or `contradicts` | 48 | 28 | 19 of 38 |
+| the two steps, no events, one per candidate | 21 | 8 | 10 of 38 |
+
+A missed update leaves both memories, each with its date. A wrong closing hides one that is still
+true. With the extraction model as judge, whose confidence is stated rather than measured,
+`updates` or `contradicts` still needs 0.6 and there is no second step. In doubt, both memories
+are kept. A state with no
 known end is given one 7 days after it starts. The stored confidence is the `worth` probability
 with the decisions judge, otherwise 0.6 (0.9 for an explicit `remember`).
 
