@@ -254,6 +254,20 @@ impl Db for Mem {
         Ok(true)
     }
 
+    async fn reopen(&self, id: &str, scopes: &[String]) -> Res<bool> {
+        let mut s = self.0.lock().unwrap();
+        let Some(mut m) = s
+            .memory(id)
+            .filter(|m| !m.is_live() && scopes.contains(&m.scope))
+        else {
+            return Ok(false);
+        };
+        m.valid_to = None;
+        m.superseded_by = None;
+        s.push_memory(m, false);
+        Ok(true)
+    }
+
     async fn purge_owner(&self, owner: &str) -> Res<(u64, u64)> {
         let mut s = self.0.lock().unwrap();
         let (scope, person) = (format!("user:{owner}"), format!("person:{owner}"));
