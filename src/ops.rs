@@ -715,6 +715,26 @@ pub async fn forget(
     }
 }
 
+/// For a memory closed by mistake, by `forget` or by the judge.
+pub async fn reopen(app: &App, p: &Principal, id: &str, scopes: &[String]) -> Res<()> {
+    let writable = p.writable_of(scopes);
+    if writable.is_empty() {
+        return Err(OpError::Forbidden(
+            "this key cannot change memories in those scopes".into(),
+        ));
+    }
+    match app.db.reopen(id, &writable).await {
+        Ok(true) => {
+            let _ = app.refresh().await;
+            Ok(())
+        }
+        Ok(false) => Err(OpError::NotFound(
+            "no closed memory with that id that you can change".into(),
+        )),
+        Err(e) => Err(OpError::Internal(e)),
+    }
+}
+
 pub async fn episode(
     app: &App,
     p: &Principal,
@@ -1613,6 +1633,26 @@ mod tests {
                     .contains("no longer true"),
             "asked for on purpose: if it comes out, it comes out marked"
         );
+        assert!(matches!(
+            reopen(&a, &user("bob"), &m.id, &[]).await,
+            Err(OpError::NotFound(_))
+        ));
+        reopen(&a, &ana, &m.id, &[]).await.unwrap();
+        let back = recall(
+            &a,
+            &ana,
+            auto("which day do deploys go out", "prompt", "s2"),
+        )
+        .await
+        .unwrap();
+        assert!(
+            back["text"].as_str().unwrap().contains(&m.id),
+            "reopened, it is current again: {back}"
+        );
+        assert!(matches!(
+            reopen(&a, &ana, &m.id, &[]).await,
+            Err(OpError::NotFound(_))
+        ));
     }
 
     #[tokio::test]

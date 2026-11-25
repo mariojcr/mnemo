@@ -245,6 +245,50 @@ async fn forget_and_stale_judgement(db: &dyn Store) {
     );
 }
 
+async fn reopen_undoes_a_close(db: &dyn Store) {
+    let plan = WritePlan {
+        inserts: vec![mem("r1", "global", "x", &[]), mem("r2", "global", "y", &[])],
+        ..Default::default()
+    };
+    db.apply(&plan, "", 1).await.unwrap();
+    let last = |id: &'static str| async move {
+        db.memories_since(0, &[], 50)
+            .await
+            .unwrap()
+            .into_iter()
+            .rev()
+            .find(|m| m.0.id == id)
+            .unwrap()
+            .0
+    };
+    assert!(
+        !db.reopen("r1", &["global".into()]).await.unwrap(),
+        "a live memory is not reopened"
+    );
+    db.apply(
+        &WritePlan {
+            closes: vec![("r1".into(), 5, Some("r2".into()))],
+            ..Default::default()
+        },
+        "",
+        2,
+    )
+    .await
+    .unwrap();
+    assert!(
+        !db.reopen("r1", &["user:x".into()]).await.unwrap(),
+        "not outside its scopes"
+    );
+    assert!(!db.reopen("nope", &["global".into()]).await.unwrap());
+    assert!(db.reopen("r1", &["global".into()]).await.unwrap());
+    let m = last("r1").await;
+    assert_eq!((m.valid_to, m.superseded_by.as_deref()), (None, None));
+    assert!(m.is_live());
+    assert!(db.forget("r2", &["global".into()], "", 3).await.unwrap());
+    assert!(db.reopen("r2", &["global".into()]).await.unwrap());
+    assert!(last("r2").await.is_live(), "a forgotten memory too");
+}
+
 async fn threads_are_claimed_once_and_advanced(db: &dyn Store) {
     let t = Thread {
         thread: "s1|user:a".into(),
@@ -892,6 +936,7 @@ suite!(
     revisions_follow_writes_and_round_trip_everything,
     rows_already_read_are_skipped_by_range,
     forget_and_stale_judgement,
+    reopen_undoes_a_close,
     threads_are_claimed_once_and_advanced,
     raw_episodes_are_searchable_by_stem_and_scoped,
     purge_removes_history_and_leaves_tombstones,

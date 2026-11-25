@@ -170,6 +170,9 @@ pub trait Db: Send + Sync {
         now: i64,
     ) -> Result<i64, ApplyError>;
     async fn forget(&self, id: &str, scopes: &[String], reason: &str, now: i64) -> Res<bool>;
+    /// Undoes a close, by `forget` or by the judge: the memory has no end and no successor again.
+    /// False when it is live, unknown or outside `scopes`.
+    async fn reopen(&self, id: &str, scopes: &[String]) -> Res<bool>;
     async fn purge_owner(&self, owner: &str) -> Res<(u64, u64)>;
     async fn touch_thread(&self, t: &Thread, last_ms: i64, n: i32) -> Res<()>;
     async fn claim_threads(

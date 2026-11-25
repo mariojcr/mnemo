@@ -161,6 +161,7 @@ needs a credential ([auth](auth.md)).
 | `POST /v1/recall` | `{query, limit?, scopes?, as_of?, w?, entities?, since?, until?, semantic?, raw?, budget_tokens?, thread?, deadline_ms?}` |
 | `POST /v1/memories`, `GET /v1/memories/{id}` | store a memory explicitly; read one with its history |
 | `POST /v1/forget` | `{id, reason}`: close a memory |
+| `POST /v1/reopen` | `{id}`: undo a close, by `forget` or by the judge; the memory is current again |
 | `POST /v1/episodes`, `GET /v1/episodes/{id}?around=` | ingest raw episodes; read one with its neighbours |
 | `POST /v1/entities`, `GET /v1/entities/{id}` | deterministic entities; an entity's card and timeline |
 | `POST /v1/records`, `GET /v1/records?key=` | events and snapshots of things |

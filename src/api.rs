@@ -70,12 +70,13 @@ fn oauth_principal(id: crate::oidc::Identity) -> Principal {
 /// Memory operations and reads only; account and admin routes need the browser session, so a token
 /// that passes through a third party (or leaks) cannot erase the whole memory.
 fn oauth_route_allowed(path: &str) -> bool {
-    const ROUTES: [&str; 14] = [
+    const ROUTES: [&str; 15] = [
         "/mcp",
         "/v1/whoami",
         "/v1/recall",
         "/v1/memories",
         "/v1/forget",
+        "/v1/reopen",
         "/v1/episodes",
         "/v1/cursors",
         "/v1/entities",
@@ -369,7 +370,7 @@ async fn forward_writes(State(app): State<Arc<App>>, req: Request, next: Next) -
         (method.as_str(), path.as_str()),
         (
             "POST",
-            "/v1/memories" | "/v1/forget" | "/v1/entities" | "/v1/records"
+            "/v1/memories" | "/v1/forget" | "/v1/reopen" | "/v1/entities" | "/v1/records"
         )
     ) || (method == "POST"
         && matches!(
@@ -577,6 +578,24 @@ async fn forget(
 ) -> Response {
     match ops::forget(&app, &p, &r.id, &r.scopes, &r.reason).await {
         Ok(()) => Json(json!({"closed": r.id})).into_response(),
+        Err(e) => op_err(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct ReopenReq {
+    id: String,
+    #[serde(default)]
+    scopes: Vec<String>,
+}
+
+async fn reopen(
+    State(app): State<Arc<App>>,
+    Extension(p): Extension<Principal>,
+    Json(r): Json<ReopenReq>,
+) -> Response {
+    match ops::reopen(&app, &p, &r.id, &r.scopes).await {
+        Ok(()) => Json(json!({"reopened": r.id})).into_response(),
         Err(e) => op_err(e),
     }
 }
@@ -955,6 +974,7 @@ pub fn router(app: Arc<App>) -> Router {
     .route("/v1/memories", post(remember))
     .route("/v1/memories/{id}", get(get_memory))
     .route("/v1/forget", post(forget))
+    .route("/v1/reopen", post(reopen))
     .route("/v1/episodes", post(ingest))
     .route("/v1/episodes/{id}", get(get_episode))
     .route("/v1/cursors/{name}", get(get_cursor))

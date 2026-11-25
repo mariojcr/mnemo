@@ -90,9 +90,10 @@ The writer hands out the sequence, so on a single ClickHouse node a reader that 
 exits with code 3.
 
 A replica forwards, with the caller's credentials, every write that needs a sequence number:
-`POST /v1/memories`, `/v1/forget`, `/v1/entities`, `/v1/records`, connection changes, re-embedding,
-`DELETE /v1/owners/{id}` and the MCP tools `remember`, `forget` and `keep`. The writer authorizes
-them again. Episodes and metering rows need no sequence number, so a replica writes them itself.
+`POST /v1/memories`, `/v1/forget`, `/v1/reopen`, `/v1/entities`, `/v1/records`, connection
+changes, re-embedding, `DELETE /v1/owners/{id}` and the MCP tools `remember`, `forget` and `keep`.
+The writer authorizes them again. Episodes and metering rows need no sequence number, so a replica
+writes them itself.
 
 ## What talks to what
 

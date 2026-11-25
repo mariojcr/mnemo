@@ -1061,6 +1061,24 @@ impl Db for ClickHouse {
         Ok(true)
     }
 
+    async fn reopen(&self, id: &str, scopes: &[String]) -> Res<bool> {
+        let mut next = self.write.lock().await;
+        let prev = self.latest("memory", &[id.to_string()]).await?;
+        let Some((body, false, emb)) = prev.get(id) else {
+            return Ok(false);
+        };
+        let mut m = parse_memory(body, emb.clone());
+        if m.is_live() || !scopes.contains(&m.scope) {
+            return Ok(false);
+        }
+        m.valid_to = None;
+        m.superseded_by = None;
+        let seq = *next;
+        *next += 1;
+        self.append(&[memory_row(seq, &m, false)]).await?;
+        Ok(true)
+    }
+
     async fn purge_owner(&self, owner: &str) -> Res<(u64, u64)> {
         let mut next = self.write.lock().await;
         let scope = format!("user:{owner}");
